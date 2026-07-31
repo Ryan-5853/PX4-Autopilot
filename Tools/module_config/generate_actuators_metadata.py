@@ -482,14 +482,13 @@ for yaml_file in args.config_files:
         raise e
 
 if mixers is None:
-    if len(outputs) > 0:
-        raise Exception('Missing "mixer" section in yaml configs (CONFIG_MODULES_CONTROL_ALLOCATOR not added to the build?)')
-    else:
-        # set a minimal default
-        mixers = {
-                'actuator-types': { 'DEFAULT': { 'values': { 'min': 0, 'max': 1 } } },
-            'config': [],
-            }
+    # Output drivers are also useful without the PX4 control allocator (for
+    # example, when a custom controller publishes actuator outputs directly).
+    # Keep their metadata and emit an empty mixer configuration.
+    mixers = {
+            'actuator-types': { 'DEFAULT': { 'values': { 'min': 0, 'max': 1 } } },
+        'config': [],
+        }
 
 actuators = {
     'version': 1,

@@ -1,0 +1,5 @@
+# Tested/recommended Windows environment: 64-bit CPython 3.12.
+# Binary wheels are available for these versions; no C/C++ compiler is needed.
+numpy==2.4.6
+pymavlink==2.4.49
+pyserial==3.5

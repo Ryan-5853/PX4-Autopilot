@@ -1,0 +1,80 @@
+# Minimal sensor/logging base for a custom neural controller.
+#
+# This target deliberately contains no PX4 attitude/rate/position controller,
+# no flight-mode manager and no control allocator. Commander, land detection,
+# manual input and Navigator are retained for arming, failsafe and geofence
+# protection. It is not flight-ready until a replacement controller and a
+# safe output path exist.
+
+# Keep only the sensors fitted to MicoAir H743 V2. GPS, RC, ADC/battery,
+# BMI088, BMI270, SPL06, PWM and DShot remain enabled by default.px4board.
+CONFIG_COMMON_DIFFERENTIAL_PRESSURE=n
+CONFIG_DRIVERS_DIFFERENTIAL_PRESSURE_ASP5033=n
+CONFIG_DRIVERS_DIFFERENTIAL_PRESSURE_AUAV=n
+CONFIG_DRIVERS_DIFFERENTIAL_PRESSURE_ETS=n
+CONFIG_DRIVERS_DIFFERENTIAL_PRESSURE_MS4515=n
+CONFIG_COMMON_MAGNETOMETER=n
+CONFIG_DRIVERS_MAGNETOMETER_QMC5883L=y
+CONFIG_DRIVERS_PPS_CAPTURE=n
+CONFIG_DRIVERS_TAP_ESC=n
+CONFIG_COMMON_TELEMETRY=n
+CONFIG_DRIVERS_UAVCAN=n
+
+# No conventional PX4 flight controller or actuator allocation. Commander,
+# manual control, land detector and Navigator remain enabled by default for
+# safety-state management and protective actions.
+CONFIG_MODULES_NN_CONTROL=y
+CONFIG_MODULES_CONTROL_ALLOCATOR=n
+CONFIG_MODULES_FLIGHT_MODE_MANAGER=n
+CONFIG_MODULES_FW_ATT_CONTROL=n
+CONFIG_MODULES_FW_AUTOTUNE_ATTITUDE_CONTROL=n
+CONFIG_MODULES_FW_POS_CONTROL=n
+CONFIG_MODULES_FW_RATE_CONTROL=n
+CONFIG_MODULES_MC_ATT_CONTROL=n
+CONFIG_MODULES_MC_AUTOTUNE_ATTITUDE_CONTROL=n
+CONFIG_MODULES_MC_HOVER_THRUST_ESTIMATOR=n
+CONFIG_MODULES_MC_POS_CONTROL=n
+CONFIG_MODULES_MC_RATE_CONTROL=n
+CONFIG_MODULES_VTOL_ATT_CONTROL=n
+
+# Remove optional estimators and services that are unrelated to the safety
+# chain. Dataman remains as a dependency of MAVLink and Navigator.
+CONFIG_MODULES_ESC_BATTERY=n
+CONFIG_MODULES_GYRO_FFT=n
+CONFIG_MODULES_LANDING_TARGET_ESTIMATOR=n
+CONFIG_MODULES_LOCAL_POSITION_ESTIMATOR=n
+CONFIG_MODULES_PAYLOAD_DELIVERER=n
+CONFIG_MODULES_TEMPERATURE_COMPENSATION=n
+CONFIG_MODULES_UXRCE_DDS_CLIENT=n
+
+# EKF2: retain IMU, barometer, magnetometer and normal GNSS fusion only.
+CONFIG_EKF2_MULTI_INSTANCE=n
+CONFIG_EKF2_AIRSPEED=n
+CONFIG_EKF2_AUX_GLOBAL_POSITION=n
+CONFIG_EKF2_AUXVEL=n
+CONFIG_EKF2_BARO_COMPENSATION=n
+CONFIG_EKF2_DRAG_FUSION=n
+CONFIG_EKF2_EXTERNAL_VISION=n
+CONFIG_EKF2_GNSS_YAW=n
+CONFIG_EKF2_OPTICAL_FLOW=n
+# PX4 v1.16.2 requires one terrain source for its EKF2 terrain declarations
+# to match the implementation. No range-finder driver is included here.
+CONFIG_EKF2_RANGE_FINDER=y
+CONFIG_EKF2_SIDESLIP=n
+CONFIG_EKF2_WIND=n
+
+# The sensors module still publishes acceleration, angular velocity, air data
+# (barometer), magnetometer and GPS; airspeed and optical flow are omitted.
+CONFIG_SENSORS_VEHICLE_AIRSPEED=n
+CONFIG_SENSORS_VEHICLE_OPTICAL_FLOW=n
+
+# Keep field diagnostics needed for bring-up, but remove destructive,
+# benchmarking and infrequently used shell commands.
+CONFIG_SYSTEMCMDS_DUMPFILE=n
+CONFIG_SYSTEMCMDS_FAILURE=n
+CONFIG_SYSTEMCMDS_GPIO=n
+CONFIG_SYSTEMCMDS_I2CDETECT=n
+CONFIG_SYSTEMCMDS_SD_BENCH=n
+CONFIG_SYSTEMCMDS_SD_STRESS=n
+CONFIG_SYSTEMCMDS_SYSTEM_TIME=n
+CONFIG_SYSTEMCMDS_TUNE_CONTROL=n

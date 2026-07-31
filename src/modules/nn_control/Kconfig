@@ -1,0 +1,7 @@
+menuconfig MODULES_NN_CONTROL
+	bool "nn_control"
+	default n
+	---help---
+		Build the neural-network controller interface. The module gathers
+		estimator, processed IMU, manual-control and battery data and publishes
+		direct actuator motor/servo commands after local safety checks.

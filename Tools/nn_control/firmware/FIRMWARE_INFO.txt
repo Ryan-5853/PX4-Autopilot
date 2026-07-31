@@ -1,0 +1,12 @@
+Target: MicoAir H743 V2
+PX4 build target: micoair_h743-v2_nncontrol
+Model: int8 GRU 21-128-128-4
+Model seed: 0x4e4e4752
+Model weight bytes: 163344
+Model checksum: 0xb8ea4fee
+Verification protocol: NNGRU_REQ/NNGRU_RSP version 1
+Safety mode: RANDOM-WEIGHT DRY-RUN, actuator output inhibited
+
+Build resource usage:
+FLASH: 1053936 / 1835008 bytes (57.43%)
+AXI SRAM: 214024 / 524288 bytes (40.82%)
