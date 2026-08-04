@@ -1,0 +1,49 @@
+#!/bin/sh
+#
+# @name Direct Actuator Controller (2 motors, 3 servos)
+#
+# @type Helicopter
+# @class Copter
+#
+# @output Motor1 upper rotor (M1)
+# @output Motor2 lower rotor (M2)
+# @output Servo1 swashplate servo 1 (M6)
+# @output Servo2 swashplate servo 2 (M7)
+# @output Servo3 swashplate servo 3 (M8)
+#
+# @maintainer Custom controller integration
+#
+
+. ${R}etc/init.d/rc.direct_control_defaults
+
+# Physical outputs M1-M4 share TIM1, M5-M6 share TIM3 and M7-M8 share
+# TIM4. M1/M2 drive the upper/lower rotor motors; M6/M7/M8 drive the
+# three swashplate servos.
+param set-default PWM_MAIN_TIM0 400
+param set-default PWM_MAIN_TIM1 333
+param set-default PWM_MAIN_TIM2 333
+
+param set-default PWM_MAIN_FUNC1 101
+param set-default PWM_MAIN_FUNC2 102
+param set-default PWM_MAIN_FUNC3 0
+param set-default PWM_MAIN_FUNC4 0
+param set-default PWM_MAIN_FUNC5 0
+param set-default PWM_MAIN_FUNC6 201
+param set-default PWM_MAIN_FUNC7 202
+param set-default PWM_MAIN_FUNC8 203
+param set-default PWM_MAIN_FUNC9 0
+param set-default PWM_MAIN_FUNC10 0
+
+# Conservative PWM defaults. QGC Actuators can change servo direction, trim,
+# limits and motor protocol without changing the controller backend.
+param set-default PWM_MAIN_DIS1 1000
+param set-default PWM_MAIN_DIS2 1000
+param set-default PWM_MAIN_FAIL1 1000
+param set-default PWM_MAIN_FAIL2 1000
+
+param set-default PWM_MAIN_DIS6 1500
+param set-default PWM_MAIN_DIS7 1500
+param set-default PWM_MAIN_DIS8 1500
+param set-default PWM_MAIN_FAIL6 1500
+param set-default PWM_MAIN_FAIL7 1500
+param set-default PWM_MAIN_FAIL8 1500

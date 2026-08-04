@@ -16,7 +16,23 @@ param set-default MAV_2_CONFIG 104
 param set-default SER_TEL4_BAUD 115200
 
 param set-default IMU_GYRO_CUTOFF 80
-param set-default SYS_AUTOSTART 4001
+# The nncontrol target only packages the custom airframe, while the normal
+# target packages the standard quadrotor. Select a default that exists in the
+# actual ROMFS so rcS never resets SYS_AUTOSTART back to zero.
+if [ -f ${R}etc/init.d/airframes/22001_direct_actuator_controller ]
+then
+	param set-default SYS_AUTOSTART 22001
+
+	# This is a dedicated direct-controller firmware. Override a persisted zero
+	# or stale airframe selection so startup never depends on QGC metadata.
+	if ! param compare SYS_AUTOSTART 22001
+	then
+		param set SYS_AUTOSTART 22001
+		param save
+	fi
+else
+	param set-default SYS_AUTOSTART 4001
+fi
 param set-default MC_PITCHRATE_K 0.4
 param set-default MC_ROLLRATE_K 0.35
 param set-default MC_YAWRATE_K 1.2

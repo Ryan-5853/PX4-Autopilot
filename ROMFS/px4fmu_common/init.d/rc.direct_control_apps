@@ -1,0 +1,10 @@
+#!/bin/sh
+#
+# Runtime applications for the direct actuator controller airframe.
+#
+
+# Retain PX4 arming/landed-state handling, but do not start a control allocator
+# or any PX4 attitude, rate, position or flight-mode controller.
+land_detector start multicopter
+nn_control start
+

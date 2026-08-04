@@ -24,6 +24,14 @@ then
 fi
 
 #
+# Direct actuator controller setup.
+#
+if [ $VEHICLE_TYPE = direct_control ]
+then
+	. ${R}etc/init.d/rc.direct_control_apps
+fi
+
+#
 # UGV setup.
 #
 if [ $VEHICLE_TYPE = rover ]

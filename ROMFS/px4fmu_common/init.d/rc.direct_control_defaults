@@ -1,0 +1,13 @@
+#!/bin/sh
+#
+# Defaults for a controller that publishes actuator_motors and actuator_servos
+# directly, without PX4 control allocation or attitude/rate controllers.
+#
+
+set VEHICLE_TYPE direct_control
+
+# MAV_TYPE_HELICOPTER keeps QGC presentation compatible with the airframe's
+# two-motor/three-servo physical layout without enabling PX4 helicopter control.
+param set-default MAV_TYPE 4
+param set-default IMU_GYRO_RATEMAX 1000
+

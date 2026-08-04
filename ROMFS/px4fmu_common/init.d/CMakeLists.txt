@@ -69,6 +69,13 @@ if(CONFIG_MODULES_MC_RATE_CONTROL)
 	)
 endif()
 
+if(CONFIG_MODULES_NN_CONTROL)
+	px4_add_romfs_files(
+		rc.direct_control_apps
+		rc.direct_control_defaults
+	)
+endif()
+
 if(CONFIG_MODULES_ROVER_POS_CONTROL)
 	px4_add_romfs_files(
 		rc.rover_apps

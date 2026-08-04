@@ -148,7 +148,7 @@ int8_t NeuralNetworkInterface::quantize(float value, float inverse_scale)
 	return static_cast<int8_t>(math::constrain(quantized, int32_t{-127}, int32_t{127}));
 }
 
-void NeuralNetworkInterface::quantizeInput(const NeuralControlInput &input,
+void NeuralNetworkInterface::quantizeInput(const ControllerInput &input,
 		int8_t (&quantized)[kInputPadded]) const
 {
 	float features[kInputSize] {};
@@ -290,7 +290,7 @@ void NeuralNetworkInterface::gruLayer(const int8_t *input, int input_size,
 	}
 }
 
-bool NeuralNetworkInterface::run(const NeuralControlInput &input, NeuralControlOutput &output)
+bool NeuralNetworkInterface::run(const ControllerInput &input, NeuralControlOutput &output)
 {
 	if (!_initialized) {
 		return false;

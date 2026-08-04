@@ -4,6 +4,19 @@
 #
 ############################################################################
 
+if(CONFIG_NN_CONTROL_BACKEND_NEURAL)
+	set(controller_backend_sources
+		NeuralControllerBackend.cpp
+		NeuralNetworkInterface.cpp
+	)
+elseif(CONFIG_NN_CONTROL_BACKEND_LQR)
+	set(controller_backend_sources LqrControllerBackend.cpp)
+elseif(CONFIG_NN_CONTROL_BACKEND_HYBRID)
+	set(controller_backend_sources HybridControllerBackend.cpp)
+else()
+	message(FATAL_ERROR "nn_control requires exactly one controller backend")
+endif()
+
 px4_add_module(
 	MODULE modules__nn_control
 	MAIN nn_control
@@ -11,8 +24,10 @@ px4_add_module(
 		${MAX_CUSTOM_OPT_LEVEL}
 	SRCS
 		NNControl.cpp
-		NeuralNetworkInterface.cpp
+		ControllerBackend.hpp
+		ControllerTypes.hpp
 		NNVerificationProtocol.hpp
+		${controller_backend_sources}
 	DEPENDS
 		px4_work_queue
 	)

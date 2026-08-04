@@ -40,6 +40,13 @@ px4_add_romfs_files(
 	# [22000, 22999] Reserve for custom models
 )
 
+if(CONFIG_MODULES_NN_CONTROL)
+	px4_add_romfs_files(
+		# [22000, 22999] Custom controller models
+		22001_direct_actuator_controller
+	)
+endif()
+
 if(CONFIG_MODULES_SIMULATION_PWM_OUT_SIM)
 	px4_add_romfs_files(
 		# [1000, 1999] Simulation setups

@@ -1,7 +1,37 @@
 menuconfig MODULES_NN_CONTROL
-	bool "nn_control"
+	bool "Direct actuator controller framework"
 	default n
 	---help---
-		Build the neural-network controller interface. The module gathers
-		estimator, processed IMU, manual-control and battery data and publishes
-		direct actuator motor/servo commands after local safety checks.
+		Build the direct controller interface. The framework gathers estimator,
+		processed IMU, manual-control and battery data and publishes direct
+		actuator motor/servo commands after local safety checks.
+
+if MODULES_NN_CONTROL
+
+choice NN_CONTROL_BACKEND
+	prompt "Controller backend"
+	default NN_CONTROL_BACKEND_NEURAL
+	---help---
+		Compile exactly one implementation behind the stable controller API.
+
+config NN_CONTROL_BACKEND_NEURAL
+	bool "Neural network"
+	---help---
+		Build the int8 GRU backend. The current deterministic random-weight
+		model is verification-only and cannot obtain actuator authority.
+
+config NN_CONTROL_BACKEND_LQR
+	bool "LQR"
+	---help---
+		Build the LQR backend scaffold. Actuator output remains inhibited until
+		a flight-validated implementation replaces the scaffold.
+
+config NN_CONTROL_BACKEND_HYBRID
+	bool "Hybrid neural/LQR"
+	---help---
+		Build the hybrid backend scaffold. Actuator output remains inhibited
+		until a flight-validated implementation replaces the scaffold.
+
+endchoice
+
+endif

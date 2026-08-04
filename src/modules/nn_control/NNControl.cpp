@@ -14,13 +14,14 @@
 #include <px4_platform_common/time.h>
 
 static_assert(nn_verification::request::kObservationFirst
-	      + NeuralNetworkInterface::kInputSize <= debug_array_s::ARRAY_SIZE,
+	      + ControllerBackend::kVerificationInputSize <= debug_array_s::ARRAY_SIZE,
 	      "NN verification request exceeds DEBUG_FLOAT_ARRAY capacity");
 static_assert(nn_verification::response::kMacsPerInference
 	      < debug_array_s::ARRAY_SIZE,
 	      "NN verification response exceeds DEBUG_FLOAT_ARRAY capacity");
 
 NNControl::NNControl() :
+	ModuleParams(nullptr),
 	ScheduledWorkItem(MODULE_NAME, px4::wq_configurations::rate_ctrl)
 {
 }
@@ -38,14 +39,10 @@ NNControl::~NNControl()
 
 bool NNControl::init()
 {
-	if (!_network.init()) {
-		PX4_ERR("network init failed");
-		return false;
-	}
+	updateParameters(true);
 
-	if (!_verification_network.init()
-	    || _verification_network.weightChecksum() != _network.weightChecksum()) {
-		PX4_ERR("verification network init/checksum failed");
+	if (!_backend.init()) {
+		PX4_ERR("%s backend init failed", _backend.name());
 		return false;
 	}
 
@@ -74,7 +71,23 @@ void NNControl::updateSubscriptions()
 	_vehicle_local_position_sub.update(&_vehicle_local_position);
 }
 
-bool NNControl::buildInput(NeuralControlInput &input, hrt_abstime now)
+void NNControl::updateParameters(bool force)
+{
+	if (_parameter_update_sub.updated() || force) {
+		parameter_update_s update{};
+		_parameter_update_sub.copy(&update);
+		updateParams();
+
+		actuator_servos_trim_s trims{};
+		trims.timestamp = hrt_absolute_time();
+		trims.trim[0] = _param_servo_trim_1.get();
+		trims.trim[1] = _param_servo_trim_2.get();
+		trims.trim[2] = _param_servo_trim_3.get();
+		_actuator_servos_trim_pub.publish(trims);
+	}
+}
+
+bool NNControl::buildInput(ControllerInput &input, hrt_abstime now)
 {
 	if (_vehicle_attitude.timestamp_sample == 0
 	    || now - _vehicle_attitude.timestamp_sample > kEstimatorTimeout) {
@@ -131,18 +144,21 @@ bool NNControl::buildInput(NeuralControlInput &input, hrt_abstime now)
 				  && _manual_control_setpoint.timestamp_sample != 0
 				  && now - _manual_control_setpoint.timestamp_sample <= kManualControlTimeout;
 
-	if (manual_valid) {
-		input.rc_roll = _manual_control_setpoint.roll;
-		input.rc_pitch = _manual_control_setpoint.pitch;
-		input.rc_yaw = _manual_control_setpoint.yaw;
-		input.rc_throttle = _manual_control_setpoint.throttle;
-		input.rc_aux[0] = _manual_control_setpoint.aux1;
-		input.rc_aux[1] = _manual_control_setpoint.aux2;
-		input.rc_aux[2] = _manual_control_setpoint.aux3;
-		input.rc_aux[3] = _manual_control_setpoint.aux4;
-		input.rc_aux[4] = _manual_control_setpoint.aux5;
-		input.rc_aux[5] = _manual_control_setpoint.aux6;
+	if (!manual_valid) {
+		_inhibit_reason = InhibitReason::StaleManualControl;
+		return false;
 	}
+
+	input.rc_roll = _manual_control_setpoint.roll;
+	input.rc_pitch = _manual_control_setpoint.pitch;
+	input.rc_yaw = _manual_control_setpoint.yaw;
+	input.rc_throttle = _manual_control_setpoint.throttle;
+	input.rc_aux[0] = _manual_control_setpoint.aux1;
+	input.rc_aux[1] = _manual_control_setpoint.aux2;
+	input.rc_aux[2] = _manual_control_setpoint.aux3;
+	input.rc_aux[3] = _manual_control_setpoint.aux4;
+	input.rc_aux[4] = _manual_control_setpoint.aux5;
+	input.rc_aux[5] = _manual_control_setpoint.aux6;
 
 	for (float &value : input.rc_aux) {
 		if (!PX4_ISFINITE(value)) {
@@ -219,9 +235,16 @@ bool NNControl::actuatorAuthorityAllowed()
 	return true;
 }
 
-bool NNControl::validateOutput(const NeuralControlOutput &output)
+bool NNControl::validateOutput(const ActuatorSetpoint &output)
 {
-	for (float value : output.controls) {
+	for (float value : output.motors) {
+		if (!PX4_ISFINITE(value) || value < 0.f || value > 1.f) {
+			_inhibit_reason = InhibitReason::InvalidOutput;
+			return false;
+		}
+	}
+
+	for (float value : output.servos) {
 		if (!PX4_ISFINITE(value) || value < -1.f || value > 1.f) {
 			_inhibit_reason = InhibitReason::InvalidOutput;
 			return false;
@@ -231,7 +254,7 @@ bool NNControl::validateOutput(const NeuralControlOutput &output)
 	return true;
 }
 
-void NNControl::publishOutput(const NeuralControlOutput *output, hrt_abstime now)
+void NNControl::publishOutput(const ActuatorSetpoint *output, hrt_abstime now)
 {
 	actuator_motors_s motors{};
 	motors.timestamp = now;
@@ -250,13 +273,19 @@ void NNControl::publishOutput(const NeuralControlOutput *output, hrt_abstime now
 	}
 
 	if (output != nullptr) {
-		// Placeholder four-output mapping: signed network outputs are converted
-		// to non-reversible motor thrust for channels 0/1; channels 2/3 remain
-		// signed servo commands. Dry-run prevents this path for random weights.
-		motors.control[0] = math::constrain((output->controls[0] + 1.f) * 0.5f, 0.f, 1.f);
-		motors.control[1] = math::constrain((output->controls[1] + 1.f) * 0.5f, 0.f, 1.f);
-		servos.control[0] = output->controls[2];
-		servos.control[1] = output->controls[3];
+		for (int i = 0; i < ActuatorSetpoint::kMotorCount; ++i) {
+			motors.control[i] = output->motors[i];
+		}
+
+		const float trims[ActuatorSetpoint::kServoCount] {
+			_param_servo_trim_1.get(),
+			_param_servo_trim_2.get(),
+			_param_servo_trim_3.get()
+		};
+
+		for (int i = 0; i < ActuatorSetpoint::kServoCount; ++i) {
+			servos.control[i] = math::constrain(output->servos[i] + trims[i], -1.f, 1.f);
+		}
 	}
 
 	_actuator_motors_pub.publish(motors);
@@ -266,7 +295,7 @@ void NNControl::publishOutput(const NeuralControlOutput *output, hrt_abstime now
 void NNControl::publishVerificationResponse(uint32_t sequence,
 		nn_verification::Status status,
 		hrt_abstime inference_time,
-		const NeuralControlOutput *output)
+		const float *output)
 {
 	debug_array_s response{};
 	response.timestamp = hrt_absolute_time();
@@ -278,18 +307,18 @@ void NNControl::publishVerificationResponse(uint32_t sequence,
 	response.data[nn_verification::response::kInferenceTimeUs] = static_cast<float>(inference_time);
 
 	if (output != nullptr) {
-		for (int i = 0; i < NeuralNetworkInterface::kOutputSize; ++i) {
-			response.data[nn_verification::response::kOutputFirst + i] = output->controls[i];
+		for (int i = 0; i < ControllerBackend::kVerificationOutputSize; ++i) {
+			response.data[nn_verification::response::kOutputFirst + i] = output[i];
 		}
 	}
 
-	const uint32_t checksum = _verification_network.weightChecksum();
+	const uint32_t checksum = _backend.verificationChecksum();
 	response.data[nn_verification::response::kChecksumLow] = nn_verification::checksumLow(checksum);
 	response.data[nn_verification::response::kChecksumHigh] = nn_verification::checksumHigh(checksum);
 	response.data[nn_verification::response::kWeightBytes] =
-		static_cast<float>(NeuralNetworkInterface::weightBytes());
+		static_cast<float>(_backend.verificationWeightBytes());
 	response.data[nn_verification::response::kMacsPerInference] =
-		static_cast<float>(NeuralNetworkInterface::kMacsPerInference);
+		static_cast<float>(_backend.verificationMacsPerInference());
 	_verification_response_pub.publish(response);
 }
 
@@ -305,6 +334,12 @@ void NNControl::handleVerificationRequest()
 	}
 
 	++_verification_requests;
+
+	if (!_backend.verificationSupported()) {
+		++_verification_failures;
+		publishVerificationResponse(0, nn_verification::Status::InferenceFailed, 0, nullptr);
+		return;
+	}
 
 	for (int index = nn_verification::request::kVersion;
 	     index <= nn_verification::request::kChecksumHigh; ++index) {
@@ -346,7 +381,7 @@ void NNControl::handleVerificationRequest()
 		return;
 	}
 
-	if (expected_checksum != _verification_network.weightChecksum()) {
+	if (expected_checksum != _backend.verificationChecksum()) {
 		++_verification_failures;
 		publishVerificationResponse(sequence, nn_verification::Status::BadChecksum, 0, nullptr);
 		return;
@@ -358,14 +393,16 @@ void NNControl::handleVerificationRequest()
 		return;
 
 	case nn_verification::Command::Reset:
-		_verification_network.reset();
-		publishVerificationResponse(sequence, nn_verification::Status::Ok, 0, nullptr);
+		publishVerificationResponse(sequence,
+			_backend.verificationReset() ? nn_verification::Status::Ok
+			: nn_verification::Status::InferenceFailed,
+			0, nullptr);
 		return;
 
 	case nn_verification::Command::Step: {
-			float observations[NeuralNetworkInterface::kInputSize] {};
+			float observations[ControllerBackend::kVerificationInputSize] {};
 
-			for (int i = 0; i < NeuralNetworkInterface::kInputSize; ++i) {
+			for (int i = 0; i < ControllerBackend::kVerificationInputSize; ++i) {
 				observations[i] =
 					request.data[nn_verification::request::kObservationFirst + i];
 
@@ -378,15 +415,21 @@ void NNControl::handleVerificationRequest()
 				}
 			}
 
-			NeuralControlOutput output{};
+			float output[ControllerBackend::kVerificationOutputSize] {};
 			const hrt_abstime inference_start = hrt_absolute_time();
 			perf_begin(_verification_perf);
-			const bool success = _verification_network.runFeatures(observations, output);
+			const bool success = _backend.verificationStep(observations, output);
 			perf_end(_verification_perf);
 			_last_verification_time = hrt_elapsed_time(&inference_start);
 			_max_verification_time = math::max(_max_verification_time, _last_verification_time);
 
-			if (!success || !validateOutput(output)) {
+			bool output_valid = success;
+
+			for (float value : output) {
+				output_valid = output_valid && PX4_ISFINITE(value) && value >= -1.f && value <= 1.f;
+			}
+
+			if (!output_valid) {
 				++_verification_failures;
 				publishVerificationResponse(sequence,
 							    nn_verification::Status::InferenceFailed,
@@ -395,7 +438,7 @@ void NNControl::handleVerificationRequest()
 			}
 
 			publishVerificationResponse(sequence, nn_verification::Status::Ok,
-						    _last_verification_time, &output);
+						    _last_verification_time, output);
 			return;
 		}
 	}
@@ -418,14 +461,15 @@ void NNControl::Run()
 	perf_begin(_cycle_perf);
 	perf_count(_interval_perf);
 	updateSubscriptions();
+	updateParameters();
 	handleVerificationRequest();
 
-	NeuralControlInput input{};
-	NeuralControlOutput output{};
+	ControllerInput input{};
+	ActuatorSetpoint output{};
 	bool inference_valid = buildInput(input, cycle_start);
 
 	if (!inference_valid && _last_input_valid) {
-		_network.reset();
+		_backend.reset();
 	}
 
 	_last_input_valid = inference_valid;
@@ -441,8 +485,8 @@ void NNControl::Run()
 		const hrt_abstime inference_start = hrt_absolute_time();
 		perf_begin(_inference_perf);
 
-		if (!_network.run(input, output)) {
-			_inhibit_reason = InhibitReason::InferenceUnavailable;
+		if (!_backend.run(input, output)) {
+			_inhibit_reason = InhibitReason::BackendUnavailable;
 			inference_valid = false;
 		}
 
@@ -466,16 +510,14 @@ void NNControl::Run()
 		authority = actuatorAuthorityAllowed();
 	}
 
-	// Random placeholder weights are benchmark-only. Keep the complete
-	// inference and publication workload, but never forward random outputs.
-	if (inference_valid && authority && !kRandomModelDryRun) {
+	if (inference_valid && authority && _backend.actuatorOutputAllowed()) {
 		_inhibit_reason = InhibitReason::None;
 		publishOutput(&output, cycle_start);
 		_output_enabled = true;
 
 	} else {
-		if (inference_valid && kRandomModelDryRun) {
-			_inhibit_reason = InhibitReason::RandomWeightsDryRun;
+		if (inference_valid && !_backend.actuatorOutputAllowed()) {
+			_inhibit_reason = InhibitReason::BackendOutputDisabled;
 		}
 
 		++_rejected_count;
@@ -511,9 +553,9 @@ const char *NNControl::reasonString(InhibitReason reason)
 	case InhibitReason::StaleAcceleration: return "acceleration missing/stale";
 	case InhibitReason::StaleManualControl: return "manual control missing/stale";
 	case InhibitReason::InvalidInput: return "non-finite input";
-	case InhibitReason::InferenceUnavailable: return "model unavailable/rejected";
-	case InhibitReason::InvalidOutput: return "invalid model output";
-	case InhibitReason::RandomWeightsDryRun: return "random-weight dry-run";
+	case InhibitReason::BackendUnavailable: return "backend unavailable/rejected";
+	case InhibitReason::InvalidOutput: return "invalid controller output";
+	case InhibitReason::BackendOutputDisabled: return "backend output disabled";
 	}
 
 	return "unknown";
@@ -543,11 +585,11 @@ int NNControl::print_status()
 {
 	const float interval_s = perf_mean(_interval_perf);
 	const float measured_rate_hz = interval_s > 0.f ? 1.f / interval_s : 0.f;
-	PX4_INFO("21-128-128-4 int8 GRU, target 500 Hz, measured %.1f Hz", (double)measured_rate_hz);
-	PX4_INFO("mode: %s, weights: %lu bytes, checksum: 0x%08lx",
-		 kRandomModelDryRun ? "RANDOM-WEIGHT DRY-RUN" : "actuator-enabled",
-		 (unsigned long)NeuralNetworkInterface::weightBytes(),
-		 (unsigned long)_network.weightChecksum());
+	PX4_INFO("backend: %s, %s", _backend.name(), _backend.mode());
+	PX4_INFO("target 500 Hz, measured %.1f Hz", (double)measured_rate_hz);
+	PX4_INFO("verification weights: %lu bytes, checksum: 0x%08lx",
+		 (unsigned long)_backend.verificationWeightBytes(),
+		 (unsigned long)_backend.verificationChecksum());
 	PX4_INFO("actuator output: %s", _output_enabled ? "ENABLED" : "inhibited");
 	PX4_INFO("inhibit reason: %s", reasonString(_inhibit_reason));
 	PX4_INFO("inferences: %lu, rejected cycles: %lu",
@@ -558,9 +600,13 @@ int NNControl::print_status()
 	PX4_INFO("cycle last/max: %llu/%llu us, >1.5 ms: %lu, >2 ms: %lu",
 		 (unsigned long long)_last_cycle_time, (unsigned long long)_max_cycle_time,
 		 (unsigned long)_cycle_overruns, (unsigned long)_hard_deadline_misses);
-	PX4_INFO("last model output: [%.4f %.4f %.4f %.4f]",
-		 (double)_last_output.controls[0], (double)_last_output.controls[1],
-		 (double)_last_output.controls[2], (double)_last_output.controls[3]);
+	PX4_INFO("last motors: [%.4f %.4f], servos: [%.4f %.4f %.4f]",
+		 (double)_last_output.motors[0], (double)_last_output.motors[1],
+		 (double)_last_output.servos[0], (double)_last_output.servos[1],
+		 (double)_last_output.servos[2]);
+	PX4_INFO("servo trims: [%.3f %.3f %.3f]",
+		 (double)_param_servo_trim_1.get(), (double)_param_servo_trim_2.get(),
+		 (double)_param_servo_trim_3.get());
 	PX4_INFO("MAVLink verification: requests %lu, failures %lu, last/max %llu/%llu us",
 		 (unsigned long)_verification_requests, (unsigned long)_verification_failures,
 		 (unsigned long long)_last_verification_time,
@@ -576,8 +622,7 @@ int NNControl::print_status()
 
 void NNControl::resetDebug()
 {
-	_network.reset();
-	_verification_network.reset();
+	_backend.reset();
 	_inference_count = 0;
 	_rejected_count = 0;
 	_inference_overruns = 0;
@@ -599,7 +644,7 @@ void NNControl::resetDebug()
 	perf_reset(_budget_overrun_perf);
 	perf_reset(_deadline_miss_perf);
 	perf_reset(_verification_perf);
-	PX4_INFO("GRU state and load counters reset");
+	PX4_INFO("%s backend state and load counters reset", _backend.name());
 }
 
 int NNControl::custom_command(int argc, char *argv[])
@@ -625,20 +670,20 @@ int NNControl::print_usage(const char *reason)
 	PRINT_MODULE_DESCRIPTION(
 		R"DESCR_STR(
 ### Description
-Neural-network flight-controller interface.
+Compile-time-selectable direct flight-controller interface.
 
-The module runs a fixed-size 21-128-128-4 int8 GRU from fresh gyro callbacks.
-The placeholder uses deterministic random weights and always remains in dry-run:
-it performs and measures inference but publishes NaN actuator controls.
+The framework gathers estimator, IMU, pilot and battery data from uORB and runs
+the selected neural, LQR or hybrid backend from fresh gyro callbacks. Every
+backend produces the same normalized two-motor/three-servo actuator contract.
 
 Set IMU_GYRO_RATEMAX to 1000 for a 500 Hz callback-limited benchmark. Use
 `nn_control status` to inspect measured rate, inference/cycle latency and
-deadline misses. Random weights cannot be enabled for actuator output.
+deadline misses. Scaffold or dry-run backends publish NaN actuator controls.
 )DESCR_STR");
 
 	PRINT_MODULE_USAGE_NAME("nn_control", "controller");
 	PRINT_MODULE_USAGE_COMMAND("start");
-	PRINT_MODULE_USAGE_COMMAND_DESCR("reset", "Reset GRU hidden state and load counters");
+	PRINT_MODULE_USAGE_COMMAND_DESCR("reset", "Reset backend state and load counters");
 	PRINT_MODULE_USAGE_DEFAULT_COMMANDS();
 	return 0;
 }
