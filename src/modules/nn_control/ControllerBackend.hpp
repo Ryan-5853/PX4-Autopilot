@@ -15,6 +15,9 @@
 #if defined(CONFIG_NN_CONTROL_BACKEND_NEURAL)
 # include "NeuralNetworkInterface.hpp"
 #endif
+#if defined(CONFIG_NN_CONTROL_BACKEND_LQR)
+# include "LqiControllerCore.hpp"
+#endif
 
 /**
  * Compile-time-selected controller backend.
@@ -48,5 +51,8 @@ private:
 #if defined(CONFIG_NN_CONTROL_BACKEND_NEURAL)
 	NeuralNetworkInterface _controller_network{};
 	NeuralNetworkInterface _verification_network{};
+#endif
+#if defined(CONFIG_NN_CONTROL_BACKEND_LQR)
+	LqiControllerCore _lqi{};
 #endif
 };

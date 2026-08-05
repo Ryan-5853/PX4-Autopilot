@@ -45,3 +45,19 @@ PARAM_DEFINE_FLOAT(NN_SV_TRIM2, 0.0f);
  * @group Direct Actuator Controller
  */
 PARAM_DEFINE_FLOAT(NN_SV_TRIM3, 0.0f);
+
+/**
+ * LQI backend actuator output enable
+ *
+ * The Plan A external-collective LQI backend computes outputs at 500 Hz but
+ * keeps actuator authority inhibited until bench/HIL validation is complete.
+ * Set to 1 only after the validated controller has passed the bench and HIL
+ * acceptance criteria; firmware output stays NaN while this is 0.
+ *
+ * @min 0
+ * @max 1
+ * @value 0 disabled
+ * @value 1 enabled
+ * @group Direct Actuator Controller
+ */
+PARAM_DEFINE_INT32(NN_LQI_OUTPUT_EN, 0);
