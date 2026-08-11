@@ -35,6 +35,11 @@ struct ControllerInput {
 	float rc_throttle;
 	float rc_aux[6];
 
+	// Mechanical motor RPM from esc_status, matched by Motor1/Motor2 actuator
+	// function. The LQI falls back to its command observer when unavailable.
+	float motor_rpm[2];
+	bool motor_rpm_valid;
+
 	float battery_voltage_v;
 	float battery_current_a;
 	float battery_remaining;

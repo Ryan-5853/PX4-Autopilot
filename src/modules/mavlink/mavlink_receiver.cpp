@@ -2337,6 +2337,14 @@ MavlinkReceiver::handle_message_hil_sensor(mavlink_message_t *msg)
 		}
 
 		if (_px4_accel != nullptr) {
+			// HIL_SENSOR acceleration is already SI m/s^2. The same
+			// PX4Accelerometer instance is also used by
+			// HIL_STATE_QUATERNION, whose integer acceleration fields are
+			// mG and set a different scale. Restore the MAVLink contract
+			// here so interleaving both standard messages cannot corrupt
+			// the primary IMU stream.
+			_px4_accel->set_scale(1.f);
+
 			if (PX4_ISFINITE(temperature)) {
 				_px4_accel->set_temperature(temperature);
 			}

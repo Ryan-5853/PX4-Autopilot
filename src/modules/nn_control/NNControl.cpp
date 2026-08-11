@@ -56,6 +56,11 @@ bool NNControl::init()
 		return false;
 	}
 
+	// The controller normally runs from fresh gyro callbacks. Keep a slow
+	// watchdog schedule as a fallback so stop/start and recovery still work if
+	// the sensor voter temporarily has no valid angular-velocity publication.
+	ScheduleDelayed(kWatchdogInterval);
+
 	return true;
 }
 
@@ -64,11 +69,13 @@ void NNControl::updateSubscriptions()
 	_actuator_armed_sub.update(&_actuator_armed);
 	_battery_status_sub.update(&_battery_status);
 	_failsafe_flags_sub.update(&_failsafe_flags);
+	_esc_status_sub.update(&_esc_status);
 	_manual_control_setpoint_sub.update(&_manual_control_setpoint);
 	_vehicle_acceleration_sub.update(&_vehicle_acceleration);
 	_vehicle_angular_velocity_sub.update(&_vehicle_angular_velocity);
 	_vehicle_attitude_sub.update(&_vehicle_attitude);
 	_vehicle_local_position_sub.update(&_vehicle_local_position);
+	_vehicle_status_sub.update(&_vehicle_status);
 }
 
 void NNControl::updateParameters(bool force)
@@ -166,6 +173,29 @@ bool NNControl::buildInput(ControllerInput &input, hrt_abstime now)
 		}
 	}
 
+	// ESC feedback is optional. Match by actuator function instead of array
+	// position because telemetry order is driver-dependent.
+	bool motor_found[2] {false, false};
+
+	if (_esc_status.timestamp != 0 && now - _esc_status.timestamp <= kEstimatorTimeout) {
+		for (int esc_index = 0; esc_index < _esc_status.esc_count
+		     && esc_index < esc_status_s::CONNECTED_ESC_MAX; ++esc_index) {
+			if ((_esc_status.esc_online_flags & (1u << esc_index)) == 0) {
+				continue;
+			}
+
+			const int motor_index = static_cast<int>(_esc_status.esc[esc_index].actuator_function)
+					- static_cast<int>(actuator_motors_s::ACTUATOR_FUNCTION_MOTOR1);
+
+			if (motor_index >= 0 && motor_index < 2) {
+				input.motor_rpm[motor_index] = static_cast<float>(_esc_status.esc[esc_index].esc_rpm);
+				motor_found[motor_index] = true;
+			}
+		}
+	}
+
+	input.motor_rpm_valid = motor_found[0] && motor_found[1];
+
 	input.battery_voltage_v = PX4_ISFINITE(_battery_status.voltage_v) ? _battery_status.voltage_v : 0.f;
 	input.battery_current_a = PX4_ISFINITE(_battery_status.current_a) ? _battery_status.current_a : -1.f;
 	input.battery_remaining = PX4_ISFINITE(_battery_status.remaining) ? _battery_status.remaining : 0.f;
@@ -214,17 +244,36 @@ bool NNControl::actuatorAuthorityAllowed()
 		return false;
 	}
 
-	if (_actuator_armed.lockdown || _actuator_armed.manual_lockdown
+	// Commander deliberately asserts automatic lockdown in HIL so no physical
+	// output driver can move hardware. pwm_out_sim is the only HIL consumer and
+	// explicitly ignores this automatic lockdown. Keep every manual/failsafe
+	// lock, but allow the simulated actuator publication while HIL is active.
+	const bool automatic_lockdown = _actuator_armed.lockdown
+					&& _vehicle_status.hil_state != vehicle_status_s::HIL_STATE_ON;
+
+	if (automatic_lockdown || _actuator_armed.manual_lockdown
 	    || _actuator_armed.force_failsafe || _actuator_armed.in_esc_calibration_mode) {
 		_inhibit_reason = InhibitReason::ActuatorLockdown;
 		return false;
 	}
 
-	if (_failsafe_flags.attitude_invalid
-	    || _failsafe_flags.angular_velocity_invalid
+	// HIL direct-control inputs are validated above from the fresh uORB
+	// samples themselves. Commander estimator flags can remain invalid while
+	// the injected attitude/gyro stream is valid (there is no EKF contract for
+	// this controller), so do not reject an otherwise valid HIL command on
+	// those redundant flags. Keep pilot, power and hard failure gates active.
+	const bool estimator_failure = _failsafe_flags.attitude_invalid
+					|| _failsafe_flags.angular_velocity_invalid;
+	const bool estimator_failure_blocks = _vehicle_status.hil_state != vehicle_status_s::HIL_STATE_ON
+					&& estimator_failure;
+
+	const bool battery_failure_blocks = _vehicle_status.hil_state != vehicle_status_s::HIL_STATE_ON
+					&& (_failsafe_flags.battery_unhealthy
+					|| _failsafe_flags.battery_warning >= battery_status_s::WARNING_CRITICAL);
+
+	if (estimator_failure_blocks
 	    || _failsafe_flags.manual_control_signal_lost
-	    || _failsafe_flags.battery_unhealthy
-	    || _failsafe_flags.battery_warning >= battery_status_s::WARNING_CRITICAL
+	    || battery_failure_blocks
 	    || _failsafe_flags.fd_critical_failure
 	    || _failsafe_flags.fd_esc_arming_failure
 	    || _failsafe_flags.fd_motor_failure) {
@@ -449,6 +498,10 @@ void NNControl::handleVerificationRequest()
 
 void NNControl::Run()
 {
+	// Re-arm the fallback watchdog on every invocation. A gyro callback can
+	// still wake this work item at the normal 500 Hz rate.
+	ScheduleDelayed(kWatchdogInterval);
+
 	if (should_exit()) {
 		_vehicle_angular_velocity_sub.unregisterCallback();
 		ScheduleClear();
@@ -510,7 +563,12 @@ void NNControl::Run()
 		authority = actuatorAuthorityAllowed();
 	}
 
-	if (inference_valid && authority && _backend.actuatorOutputAllowed()) {
+	const bool actuator_output_allowed = inference_valid && authority
+					&& _backend.actuatorOutputAllowed();
+	const bool hold_hil_timestamp = _vehicle_status.hil_state == vehicle_status_s::HIL_STATE_ON
+					&& _actuator_armed.armed && !actuator_output_allowed;
+
+	if (actuator_output_allowed) {
 		_inhibit_reason = InhibitReason::None;
 		publishOutput(&output, cycle_start);
 		_output_enabled = true;
@@ -521,7 +579,14 @@ void NNControl::Run()
 		}
 
 		++_rejected_count;
-		publishOutput(nullptr, cycle_start);
+		// In HIL, do not publish a new timestamp for an armed but invalid
+		// controller input. The host transport must observe the stale boundary
+		// and stop advancing the plant instead of treating zero/NaN output as a
+		// valid control frame. Disarmed operation still publishes a fresh null
+		// frame so the startup handshake can observe the unarmed state.
+		if (!hold_hil_timestamp) {
+			publishOutput(nullptr, cycle_start);
+		}
 		_output_enabled = false;
 	}
 

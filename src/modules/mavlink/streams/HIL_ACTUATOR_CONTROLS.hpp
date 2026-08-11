@@ -54,6 +54,10 @@ public:
 		return _act_sub.advertised() ? MAVLINK_MSG_ID_HIL_ACTUATOR_CONTROLS_LEN + MAVLINK_NUM_NON_PAYLOAD_BYTES : 0;
 	}
 
+	// HIL actuator feedback is the timing boundary for the external plant and
+	// must not be reduced by the bandwidth multiplier applied to telemetry.
+	bool const_rate() override { return true; }
+
 private:
 	explicit MavlinkStreamHILActuatorControls(Mavlink *mavlink) : MavlinkStream(mavlink)
 	{
@@ -68,7 +72,12 @@ private:
 	{
 		actuator_outputs_s act;
 
-		if (_act_sub.update(&act)) {
+		// Read the latest output at the configured stream boundary. The original
+		// uORB timestamp is preserved, so the receiver can reject a repeated
+		// frame if pwm_out_sim or the controller stops publishing. Using copy()
+		// also avoids coupling delivery to the relative scheduling phase of the
+		// rate_ctrl publisher and the MAVLink sender.
+		if (_act_sub.copy(&act) && act.timestamp != 0) {
 			mavlink_hil_actuator_controls_t msg{};
 			msg.time_usec = act.timestamp;
 

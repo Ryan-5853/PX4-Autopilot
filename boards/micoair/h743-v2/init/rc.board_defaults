@@ -15,6 +15,14 @@ param set-default RC_INPUT_PROTO -1
 param set-default MAV_2_CONFIG 104
 param set-default SER_TEL4_BAUD 115200
 
+# HIL actuator order mirrors SimEnv and the WebUI bridge:
+# upper motor, lower motor, servo 1, servo 2, servo 3.
+param set-default HIL_ACT_FUNC1 101
+param set-default HIL_ACT_FUNC2 102
+param set-default HIL_ACT_FUNC3 201
+param set-default HIL_ACT_FUNC4 202
+param set-default HIL_ACT_FUNC5 203
+
 param set-default IMU_GYRO_CUTOFF 80
 # The nncontrol target only packages the custom airframe, while the normal
 # target packages the standard quadrotor. Select a default that exists in the

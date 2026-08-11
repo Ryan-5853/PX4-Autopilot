@@ -28,6 +28,8 @@ px4_add_module(
 		ControllerTypes.hpp
 		NNVerificationProtocol.hpp
 		${controller_backend_sources}
+	MODULE_CONFIG
+		module.yaml
 	DEPENDS
 		px4_work_queue
 	)

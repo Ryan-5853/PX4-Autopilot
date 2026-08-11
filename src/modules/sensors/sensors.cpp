@@ -518,8 +518,14 @@ void Sensors::Run()
 	}
 
 	// keep adding sensors as long as we are not armed,
-	// when not adding sensors poll for param updates
-	if ((!_armed && hrt_elapsed_time(&_last_config_update) > 500_ms) || (_last_config_update == 0)) {
+	// when not adding sensors poll for param updates.
+	// In HIL the simulated IMU is created by the MAVLink receiver after the
+	// first HIL_SENSOR/HIL_STATE_QUATERNION frame. Arming can succeed before
+	// the next periodic sensor scan, so keep scanning in HIL even while armed;
+	// otherwise vehicle_angular_velocity is never published and the control
+	// chain stalls with "angular velocity missing/stale".
+	if (((!_armed || _hil_enabled) && hrt_elapsed_time(&_last_config_update) > 500_ms)
+	    || (_last_config_update == 0)) {
 
 		bool updated = false;
 

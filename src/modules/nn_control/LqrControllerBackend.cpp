@@ -7,6 +7,8 @@
 #include "ControllerBackend.hpp"
 
 #include "LqiControllerCore.hpp"
+#include "LqiManualReference.hpp"
+#include "LqiNominalModel.hpp"
 
 #include <px4_platform_common/defines.h>
 #include <parameters/param.h>
@@ -29,11 +31,16 @@ bool ControllerBackend::init()
 bool ControllerBackend::run(const ControllerInput &input, ActuatorSetpoint &output)
 {
 	LqiControllerCore::Input core_input {};
-	memcpy(core_input.attitude_q, input.attitude_q, sizeof(core_input.attitude_q));
-	memcpy(core_input.angular_velocity, input.angular_velocity,
-	       sizeof(core_input.angular_velocity));
-	core_input.rc_throttle = input.rc_throttle;
-	core_input.rc_yaw = input.rc_yaw;
+
+	if (!_lqi_reference.build(input.attitude_q, input.angular_velocity,
+				  input.rc_roll, input.rc_pitch, input.rc_yaw,
+				  input.rc_throttle, core_input)) {
+		return false;
+	}
+
+	core_input.motor_rpm[0] = input.motor_rpm[0];
+	core_input.motor_rpm[1] = input.motor_rpm[1];
+	core_input.motor_rpm_valid = input.motor_rpm_valid;
 
 	LqiControllerCore::ControlOutput control {};
 
@@ -41,8 +48,8 @@ bool ControllerBackend::run(const ControllerInput &input, ActuatorSetpoint &outp
 		return false;
 	}
 
-	// Plan A ownership boundary: the upper rotor is the external pilot/RC
-	// collective; the LQI owns the lower rotor and the three servos.
+	// Deployment ownership boundary: upper is the pilot command unchanged;
+	// nominal LQI owns lower plus the three servos.
 	output.motors[0] = control.upper;
 	output.motors[1] = control.lower;
 	output.servos[0] = control.servos[0];
@@ -54,16 +61,17 @@ bool ControllerBackend::run(const ControllerInput &input, ActuatorSetpoint &outp
 void ControllerBackend::reset()
 {
 	_lqi.reset();
+	_lqi_reference.reset();
 }
 
 const char *ControllerBackend::name() const
 {
-	return "lqr";
+	return "lqi_nominal";
 }
 
 const char *ControllerBackend::mode() const
 {
-	return "Plan A external-collective 4-output LQI";
+	return "external upper + nominal 4-output LQI";
 }
 
 bool ControllerBackend::actuatorOutputAllowed() const
@@ -86,6 +94,7 @@ bool ControllerBackend::verificationSupported() const
 bool ControllerBackend::verificationReset()
 {
 	_lqi.reset();
+	_lqi_reference.reset();
 	return true;
 }
 
@@ -95,28 +104,16 @@ bool ControllerBackend::verificationStep(
 {
 	LqiControllerCore::Input core_input {};
 
-	for (int index = 0; index < 4; ++index) {
-		core_input.attitude_q[index] = features[index];
+	if (!_lqi_reference.build(features, &features[4], features[16], features[17],
+				  features[18], features[19], core_input)) {
+		return false;
 	}
 
-	for (int index = 0; index < 3; ++index) {
-		core_input.angular_velocity[index] = features[4 + index];
-	}
-
-	core_input.rc_throttle = features[7];
-	core_input.rc_yaw = features[8];
-
-	float persistent[LqiControllerCore::kPersistentSize] {};
-	float next_persistent[LqiControllerCore::kPersistentSize] {};
-
-	for (int index = 0; index < LqiControllerCore::kPersistentSize; ++index) {
-		persistent[index] = features[9 + index];
-	}
+	core_input.motor_rpm_valid = false;
 
 	LqiControllerCore::ControlOutput control {};
 
-	if (!LqiControllerCore::stepFromState(
-		    core_input, persistent, control, next_persistent)) {
+	if (!_lqi.step(core_input, control)) {
 		return false;
 	}
 
@@ -136,15 +133,15 @@ bool ControllerBackend::verificationStep(
 
 uint32_t ControllerBackend::verificationChecksum() const
 {
-	return lqi_weights::kChecksum;
+	return lqi_nominal::kModel.checksum;
 }
 
 uint32_t ControllerBackend::verificationWeightBytes() const
 {
-	return lqi_weights::kWeightBytes;
+	return lqi_nominal::kModel.weight_bytes;
 }
 
 uint32_t ControllerBackend::verificationMacsPerInference() const
 {
-	return lqi_weights::kOutputSize * lqi_weights::kStateSize;
+	return LqiControllerModel::kOutputSize * LqiControllerModel::kStateSize;
 }

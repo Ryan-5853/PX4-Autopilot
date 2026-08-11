@@ -6,21 +6,22 @@
 
 #pragma once
 
-#include "LqiWeights.hpp"
+#include "LqiControllerModel.hpp"
 
 #include <cmath>
 
 /**
- * Dependency-free Plan A 4-output LQI core.
+ * Dependency-free, weight-independent nominal 4-output LQI core.
  *
  * Contract:
- * - The upper rotor is owned externally (RC throttle in the PX4 framework).
- * - The LQI owns the lower rotor and the three servos (4 outputs).
+ * - The pilot owns the upper rotor command. The LQI owns the lower rotor and
+ *   all three servos (4 outputs); lower collective base follows upper.
  * - State (13): [roll_error, pitch_error, p, q, r, upper_f, lower_f,
  *   servo_1, servo_2, servo_3, integral_roll, integral_pitch,
  *   integral_yaw_rate].
- * - All five actuator states are command-driven first-order observers; no
- *   ESC telemetry or servo-angle feedback is used.
+ * - Motor states use fresh Motor1/Motor2 ESC RPM when both are available and
+ *   otherwise fall back to command-driven first-order observers. Servo states
+ *   are command-driven because there is no servo-angle feedback.
  * - Fixed 500 Hz step (dt = 2 ms) matching the gain discretization.
  *
  * The class is host-compilable (no PX4 dependencies) so the same math is
@@ -30,10 +31,16 @@ class LqiControllerCore
 {
 public:
 	struct Input {
-		float attitude_q[4];	   // [w, x, y, z], body -> world (Hamilton)
-		float angular_velocity[3]; // rad/s, body FRD
-		float rc_throttle;	   // [-1, 1]
-		float rc_yaw;		   // [-1, 1]
+		// Both attitudes are Hamilton [w,x,y,z] rotations from body FRD to
+		// world NED. Rates are expressed in body FRD. The error convention is
+		// target-to-current, matching flight_controller.math.
+		float attitude_q_wb[4];
+		float target_attitude_q_wb[4];
+		float angular_velocity_b[3];
+		float target_angular_velocity_b[3];
+		float collective_base; // normalized pilot command [0, 1]
+		float motor_rpm[2];
+		bool motor_rpm_valid;
 	};
 
 	struct ControlOutput {
@@ -42,9 +49,14 @@ public:
 		float servos[3]; // LQI servo commands [-1, 1]
 	};
 
-	static constexpr int kPersistentSize = lqi_weights::kPersistentSize;
+	static constexpr int kPersistentSize = LqiControllerModel::kPersistentSize;
 
-	LqiControllerCore() = default;
+	// Safety limits applied inside the LQI step so verification, saturation
+	// handling and the firmware backend all observe the same contract.
+	static constexpr float kIdleCollectiveThreshold{0.0f};
+	static constexpr float kMaxUpperLowerDelta{0.2f};
+
+	explicit LqiControllerCore(const LqiControllerModel &model) : _model(model) {}
 
 	void reset();
 
@@ -58,7 +70,8 @@ public:
 	 * Pure single-step evaluation used by the verification protocol and the
 	 * host golden-vector check. `persistent` is [actuator(5), integral(3)].
 	 */
-	static bool stepFromState(const Input &input,
+	static bool stepFromState(const LqiControllerModel &model,
+				  const Input &input,
 				  const float persistent[kPersistentSize],
 				  ControlOutput &output,
 				  float next_persistent[kPersistentSize]);
@@ -67,6 +80,7 @@ public:
 	const ControlOutput &lastOutput() const { return _last_output; }
 
 private:
+	const LqiControllerModel &_model;
 	float _persistent[kPersistentSize]{};
 	ControlOutput _last_output{};
 };
@@ -81,24 +95,40 @@ inline void LqiControllerCore::reset()
 }
 
 inline bool LqiControllerCore::stepFromState(
+	const LqiControllerModel &model,
 	const Input &input,
 	const float persistent[kPersistentSize],
 	ControlOutput &output,
 	float next_persistent[kPersistentSize])
 {
-	using lqi_weights::kDecay;
-	using lqi_weights::kGain;
-	using lqi_weights::kIntegralLimit;
-	using lqi_weights::kLowerTrim;
-	using lqi_weights::kSlopeEff;
-	using lqi_weights::kUpperTrim;
+	if (model.schema_version != LqiControllerModel::kSchemaVersion
+	    || model.world_frame != LqiControllerModel::WorldFrame::NED
+	    || model.body_frame != LqiControllerModel::BodyFrame::FRD
+	    || model.quaternion_convention
+	       != LqiControllerModel::QuaternionConvention::HamiltonWxyzBodyToWorld
+	    || model.collective_contract
+	       != LqiControllerModel::CollectiveContract::ExternalUpperLqiLowerAndServos
+	    || model.actuator_observer != LqiControllerModel::ActuatorObserver::MotorRpmOrCommandDriven
+	    || model.gain == nullptr || model.decay == nullptr || model.slope_eff == nullptr
+	    || model.integral_limit == nullptr || model.motor_command_to_rad_s == nullptr
+	    || model.motor_table_points < 2 || !(model.dt_s > 0.0f)) {
+		return false;
+	}
 
-	// Rotation error from level target. With the identity target the error
-	// quaternion is the current attitude, canonicalized so q and -q agree.
-	float w = input.attitude_q[0];
-	float vx = input.attitude_q[1];
-	float vy = input.attitude_q[2];
-	float vz = input.attitude_q[3];
+	// q_error = conjugate(q_target_wb) * q_current_wb. This is the
+	// target-to-current local rotation used by the Python nominal controller.
+	const float tw = input.target_attitude_q_wb[0];
+	const float tx = -input.target_attitude_q_wb[1];
+	const float ty = -input.target_attitude_q_wb[2];
+	const float tz = -input.target_attitude_q_wb[3];
+	const float cw = input.attitude_q_wb[0];
+	const float cx = input.attitude_q_wb[1];
+	const float cy = input.attitude_q_wb[2];
+	const float cz = input.attitude_q_wb[3];
+	float w = tw * cw - tx * cx - ty * cy - tz * cz;
+	float vx = tw * cx + tx * cw + ty * cz - tz * cy;
+	float vy = tw * cy - tx * cz + ty * cw + tz * cx;
+	float vz = tw * cz + tx * cy - ty * cx + tz * cw;
 
 	if (w < 0.0f) {
 		w = -w;
@@ -114,21 +144,70 @@ inline bool LqiControllerCore::stepFromState(
 	const float roll_error = vx * scale;
 	const float pitch_error = vy * scale;
 
-	// Yaw tracks rate only (no yaw angle feedback), commanded by the RC yaw
-	// stick; roll/pitch track the level reference with zero target rate.
-	const float yaw_rate_target = input.rc_yaw * lqi_weights::kYawRateScaleRadS;
-	const float p_error = input.angular_velocity[0];
-	const float q_error = input.angular_velocity[1];
-	const float r_error = input.angular_velocity[2] - yaw_rate_target;
+	// Yaw tracks rate only (the yaw component of the attitude error is not a
+	// state), while all three body rates use current-minus-target error.
+	const float p_error = input.angular_velocity_b[0] - input.target_angular_velocity_b[0];
+	const float q_error = input.angular_velocity_b[1] - input.target_angular_velocity_b[1];
+	const float r_error = input.angular_velocity_b[2] - input.target_angular_velocity_b[2];
 
-	const float x[lqi_weights::kStateSize] {
+	const float collective = (input.collective_base < 0.0f) ? 0.0f
+				 : ((input.collective_base > 1.0f) ? 1.0f : input.collective_base);
+
+	// No throttle command: the controller stays idle, produces no actuator
+	// output and leaves its persistent state untouched. This covers both the
+	// pre-takeoff state (fresh instance, zero state) and any brief throttle
+	// release after arming.
+	if (collective <= kIdleCollectiveThreshold) {
+		output.upper = 0.0f;
+		output.lower = 0.0f;
+		output.servos[0] = 0.0f;
+		output.servos[1] = 0.0f;
+		output.servos[2] = 0.0f;
+
+		for (int index = 0; index < kPersistentSize; ++index) {
+			next_persistent[index] = persistent[index];
+		}
+
+		return true;
+	}
+
+	// Match Controller's piecewise-linear motor target lookup. Table entries
+	// are [normalized command, rad/s] pairs shared by both coaxial motors.
+	int upper_point = 1;
+
+	while (upper_point < model.motor_table_points - 1
+	       && collective > model.motor_command_to_rad_s[2 * upper_point]) {
+		++upper_point;
+	}
+
+	const int lower_point = upper_point - 1;
+	const float command_0 = model.motor_command_to_rad_s[2 * lower_point];
+	const float speed_0 = model.motor_command_to_rad_s[2 * lower_point + 1];
+	const float command_1 = model.motor_command_to_rad_s[2 * upper_point];
+	const float speed_1 = model.motor_command_to_rad_s[2 * upper_point + 1];
+	const float command_clamped = (collective < model.motor_command_to_rad_s[0])
+				      ? model.motor_command_to_rad_s[0]
+				      : ((collective > model.motor_command_to_rad_s[2 * (model.motor_table_points - 1)])
+					 ? model.motor_command_to_rad_s[2 * (model.motor_table_points - 1)] : collective);
+	const float target_speed = speed_0 + (command_clamped - command_0) * (speed_1 - speed_0)
+				   / (command_1 - command_0);
+	const float target_upper_dev = target_speed - model.upper_trim_rad_s;
+	const float target_lower_dev = target_speed - model.lower_trim_rad_s;
+	const float upper_motor_error = input.motor_rpm_valid
+		? std::fabs(input.motor_rpm[0]) * model.rpm_to_rad_s - model.upper_trim_rad_s - target_upper_dev
+		: persistent[0] - target_upper_dev;
+	const float lower_motor_error = input.motor_rpm_valid
+		? std::fabs(input.motor_rpm[1]) * model.rpm_to_rad_s - model.lower_trim_rad_s - target_lower_dev
+		: persistent[1] - target_lower_dev;
+
+	const float x[LqiControllerModel::kStateSize] {
 		roll_error,
 		pitch_error,
 		p_error,
 		q_error,
 		r_error,
-		persistent[0],
-		persistent[1],
+		upper_motor_error,
+		lower_motor_error,
 		persistent[2],
 		persistent[3],
 		persistent[4],
@@ -137,21 +216,29 @@ inline bool LqiControllerCore::stepFromState(
 		persistent[7],
 	};
 
-	float delta[lqi_weights::kOutputSize] {};
+	float delta[LqiControllerModel::kOutputSize] {};
 
-	for (int row = 0; row < lqi_weights::kOutputSize; ++row) {
+	for (int row = 0; row < LqiControllerModel::kOutputSize; ++row) {
 		float accumulator = 0.0f;
 
-		for (int col = 0; col < lqi_weights::kStateSize; ++col) {
-			accumulator += kGain[row * lqi_weights::kStateSize + col] * x[col];
+		for (int col = 0; col < LqiControllerModel::kStateSize; ++col) {
+			accumulator += model.gain[row * LqiControllerModel::kStateSize + col] * x[col];
 		}
 
 		delta[row] = -accumulator;
 	}
 
-	const float lower_raw = kLowerTrim + delta[0];
+	const float lower_raw = collective + delta[0];
 	const float servo_raw[3] { delta[1], delta[2], delta[3] };
-	const float lower = (lower_raw < 0.0f) ? 0.0f : ((lower_raw > 1.0f) ? 1.0f : lower_raw);
+	const float upper = collective;
+	// Keep the lower-rotor opening within 20 percentage points of the pilot
+	// upper-rotor command. The bounds are additionally constrained to [0, 1].
+	const float lower_min = (upper - kMaxUpperLowerDelta < 0.0f)
+				? 0.0f : (upper - kMaxUpperLowerDelta);
+	const float lower_max = (upper + kMaxUpperLowerDelta > 1.0f)
+				? 1.0f : (upper + kMaxUpperLowerDelta);
+	const float lower = (lower_raw < lower_min) ? lower_min
+			    : ((lower_raw > lower_max) ? lower_max : lower_raw);
 
 	float servos[3] {};
 
@@ -160,8 +247,8 @@ inline bool LqiControllerCore::stepFromState(
 				: ((servo_raw[index] > 1.0f) ? 1.0f : servo_raw[index]);
 	}
 
-	const bool saturated = (lower_raw < 0.0f)
-			       || (lower_raw > 1.0f)
+	const bool saturated = (lower_raw < lower_min)
+			       || (lower_raw > lower_max)
 			       || (servo_raw[0] < -1.0f) || (servo_raw[0] > 1.0f)
 			       || (servo_raw[1] < -1.0f) || (servo_raw[1] > 1.0f)
 			       || (servo_raw[2] < -1.0f) || (servo_raw[2] > 1.0f);
@@ -172,21 +259,16 @@ inline bool LqiControllerCore::stepFromState(
 	float integral_next[3] {};
 
 	for (int axis = 0; axis < 3; ++axis) {
-		const float candidate = persistent[5 + axis] + errors[axis] * lqi_weights::kDt;
-		const float clamped = (candidate < -kIntegralLimit[axis]) ? -kIntegralLimit[axis]
-				      : ((candidate > kIntegralLimit[axis]) ? kIntegralLimit[axis] : candidate);
+		const float candidate = persistent[5 + axis] + errors[axis] * model.dt_s;
+		const float clamped = (candidate < -model.integral_limit[axis]) ? -model.integral_limit[axis]
+				      : ((candidate > model.integral_limit[axis]) ? model.integral_limit[axis] : candidate);
 		integral_next[axis] = saturated ? persistent[5 + axis] : clamped;
 	}
 
-	// External upper command (pilot/RC), normalized to [0, 1].
-	const float throttle = (input.rc_throttle < -1.0f) ? -1.0f
-			       : ((input.rc_throttle > 1.0f) ? 1.0f : input.rc_throttle);
-	const float upper = (throttle + 1.0f) * 0.5f;
-
 	// Command-driven actuator observers: state += decay*state + slope_eff*u.
 	const float command_deviation[5] {
-		upper - kUpperTrim,
-		lower - kLowerTrim,
+		upper - model.upper_trim,
+		lower - model.lower_trim,
 		servos[0],
 		servos[1],
 		servos[2],
@@ -194,8 +276,13 @@ inline bool LqiControllerCore::stepFromState(
 
 	for (int actuator = 0; actuator < 5; ++actuator) {
 		next_persistent[actuator] =
-			kDecay[actuator] * persistent[actuator]
-			+ kSlopeEff[actuator] * command_deviation[actuator];
+			model.decay[actuator] * persistent[actuator]
+			+ model.slope_eff[actuator] * command_deviation[actuator];
+	}
+
+	if (input.motor_rpm_valid) {
+		next_persistent[0] = std::fabs(input.motor_rpm[0]) * model.rpm_to_rad_s - model.upper_trim_rad_s;
+		next_persistent[1] = std::fabs(input.motor_rpm[1]) * model.rpm_to_rad_s - model.lower_trim_rad_s;
 	}
 
 	for (int axis = 0; axis < 3; ++axis) {
@@ -221,7 +308,7 @@ inline bool LqiControllerCore::step(const Input &input, ControlOutput &output)
 {
 	float next_persistent[kPersistentSize] {};
 
-	if (!stepFromState(input, _persistent, output, next_persistent)) {
+	if (!stepFromState(_model, input, _persistent, output, next_persistent)) {
 		return false;
 	}
 

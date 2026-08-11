@@ -1,0 +1,40 @@
+module_name: Direct Actuator Controller
+
+# QGroundControl consumes this mixer metadata from the generated
+# actuators.json. The nncontrol target deliberately excludes PX4's control
+# allocator, so it cannot rely on control_allocator/module.yaml to define the
+# actuator types and their test ranges.
+mixer:
+    actuator_types:
+        motor:
+            functions: 'Motor'
+            actuator_testing_values:
+                min: 0
+                max: 1
+                default_is_nan: true
+        servo:
+            functions: 'Servo'
+            actuator_testing_values:
+                min: -1
+                max: 1
+                default: 0
+        DEFAULT:
+            actuator_testing_values:
+                min: -1
+                max: 1
+                default: -1
+
+    config:
+        param: SYS_AUTOSTART
+        types:
+            22001:
+                title: 'Direct Actuator Controller'
+                actuators:
+                  - actuator_type: 'motor'
+                    group_label: 'Rotors'
+                    count: 2
+                    item_label_prefix: ['Upper Rotor', 'Lower Rotor']
+                  - actuator_type: 'servo'
+                    group_label: 'Swashplate Servos'
+                    count: 3
+                    item_label_prefix: ['Swashplate Servo 1', 'Swashplate Servo 2', 'Swashplate Servo 3']

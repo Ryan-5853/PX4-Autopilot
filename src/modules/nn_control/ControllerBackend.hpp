@@ -17,6 +17,8 @@
 #endif
 #if defined(CONFIG_NN_CONTROL_BACKEND_LQR)
 # include "LqiControllerCore.hpp"
+# include "LqiManualReference.hpp"
+# include "LqiNominalModel.hpp"
 #endif
 
 /**
@@ -53,6 +55,7 @@ private:
 	NeuralNetworkInterface _verification_network{};
 #endif
 #if defined(CONFIG_NN_CONTROL_BACKEND_LQR)
-	LqiControllerCore _lqi{};
+	LqiControllerCore _lqi{lqi_nominal::kModel};
+	LqiManualReference _lqi_reference{lqi_nominal::kModel};
 #endif
 };

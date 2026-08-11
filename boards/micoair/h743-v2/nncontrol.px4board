@@ -25,6 +25,7 @@ CONFIG_DRIVERS_UAVCAN=n
 # safety-state management and protective actions.
 CONFIG_MODULES_NN_CONTROL=y
 CONFIG_NN_CONTROL_BACKEND_LQR=y
+CONFIG_MODULES_SIMULATION_PWM_OUT_SIM=y
 CONFIG_MODULES_CONTROL_ALLOCATOR=n
 CONFIG_MODULES_FLIGHT_MODE_MANAGER=n
 CONFIG_MODULES_FW_ATT_CONTROL=n
@@ -63,6 +64,9 @@ CONFIG_EKF2_OPTICAL_FLOW=n
 CONFIG_EKF2_RANGE_FINDER=y
 CONFIG_EKF2_SIDESLIP=n
 CONFIG_EKF2_WIND=n
+
+# Enable the complementary attitude estimator alongside EKF2.
+CONFIG_MODULES_ATTITUDE_ESTIMATOR_Q=y
 
 # The sensors module still publishes acceleration, angular velocity, air data
 # (barometer), magnetometer and GPS; airspeed and optical flow are omitted.

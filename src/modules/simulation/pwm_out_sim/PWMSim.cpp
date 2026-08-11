@@ -91,6 +91,7 @@ bool PWMSim::updateOutputs(bool stop_motors, uint16_t outputs[MAX_ACTUATORS], un
 
 		actuator_outputs.timestamp = hrt_absolute_time();
 		_actuator_outputs_sim_pub.publish(actuator_outputs);
+		++_publication_count;
 		return true;
 	}
 
@@ -107,6 +108,8 @@ void PWMSim::Run()
 		return;
 	}
 
+	perf_count(_interval_perf);
+	perf_begin(_cycle_perf);
 	_mixing_output.update();
 
 	// check for parameter updates
@@ -118,6 +121,7 @@ void PWMSim::Run()
 
 	// check at end of cycle (updateSubscriptions() can potentially change to a different WorkQueue thread)
 	_mixing_output.updateSubscriptions(true);
+	perf_end(_cycle_perf);
 }
 
 int PWMSim::task_spawn(int argc, char *argv[])
@@ -161,6 +165,7 @@ int PWMSim::print_status()
 {
 	perf_print_counter(_cycle_perf);
 	perf_print_counter(_interval_perf);
+	PX4_INFO("actuator_outputs_sim publications: %" PRIu32, _publication_count);
 	_mixing_output.printStatus();
 
 	return 0;
