@@ -502,6 +502,15 @@ bool Logger::initialize_topics()
 	}
 
 	LoggedTopics logged_topics;
+	// Parameter-identification logging requires a hard 500 Hz sampling rate.
+	// Ignore rate-factor scaling and cap the logger loop so the 2 ms topic
+	// intervals are actually reachable regardless of startup arguments.
+	_rate_factor = 1.0f;
+
+	if (_log_interval > 2000) {
+		_log_interval = 2000;
+	}
+
 	logged_topics.set_rate_factor(_rate_factor);
 
 	// initialize mission topics

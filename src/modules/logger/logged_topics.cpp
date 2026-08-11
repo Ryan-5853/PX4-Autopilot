@@ -523,6 +523,16 @@ bool LoggedTopics::initialize_logged_topics(SDLogProfileMask profile)
 		initialize_configured_topics(profile);
 	}
 
+	// Parameter-identification logging: force 500 Hz (2 ms), instance 0 only.
+	// This overrides lower-rate profile/file intervals for these topics.
+	add_topic("vehicle_attitude",          2, 0);
+	add_topic("vehicle_angular_velocity",  2, 0);
+	add_topic("esc_status",                2, 0);
+	add_topic("actuator_motors",           2, 0);
+	add_topic("actuator_servos",           2, 0);
+
+	PX4_INFO("parameter identification logging topics forced to 500 Hz");
+
 	return _subscriptions.count > 0;
 }
 
