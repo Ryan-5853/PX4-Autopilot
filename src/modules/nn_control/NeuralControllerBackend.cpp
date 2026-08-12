@@ -102,4 +102,3 @@ uint32_t ControllerBackend::verificationMacsPerInference() const
 {
 	return NeuralNetworkInterface::kMacsPerInference;
 }
-

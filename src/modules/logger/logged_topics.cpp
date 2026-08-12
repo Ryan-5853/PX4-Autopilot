@@ -514,22 +514,16 @@ bool LoggedTopics::add_topic_multi(const char *name, uint16_t interval_ms, uint8
 
 bool LoggedTopics::initialize_logged_topics(SDLogProfileMask profile)
 {
-	int ntopics = add_topics_from_file(PX4_STORAGEDIR "/etc/logging/logger_topics.txt");
-
-	if (ntopics > 0) {
-		PX4_INFO("logging %d topics from logger_topics.txt", ntopics);
-
-	} else {
-		initialize_configured_topics(profile);
-	}
+	(void)profile;
 
 	// Parameter-identification logging: force 500 Hz (2 ms), instance 0 only.
-	// This overrides lower-rate profile/file intervals for these topics.
-	add_topic("vehicle_attitude",          2, 0);
-	add_topic("vehicle_angular_velocity",  2, 0);
-	add_topic("esc_status",                2, 0);
-	add_topic("actuator_motors",           2, 0);
-	add_topic("actuator_servos",           2, 0);
+	// Only these topics are logged; profile/file topic sets are intentionally
+	// disabled so 500 Hz writes are not crowded out by other log traffic.
+	add_topic("vehicle_attitude",          0, 0); // ~534 Hz, offline -> 500
+	add_topic("vehicle_angular_velocity",  0, 0); // 1000 -> ~500
+	add_topic("esc_status",                0, 0); // native 500
+	add_topic("actuator_motors",           0, 0); // native 500
+	add_topic("actuator_servos",           0, 0); // native 500
 
 	PX4_INFO("parameter identification logging topics forced to 500 Hz");
 

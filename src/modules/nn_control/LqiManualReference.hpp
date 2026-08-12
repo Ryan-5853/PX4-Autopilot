@@ -6,21 +6,26 @@
 
 #pragma once
 
+#include "LqiCompositeControllerModel.hpp"
 #include "LqiControllerCore.hpp"
 
 #include <cmath>
 
-/** PX4 manual-control to nominal-LQI reference adapter.
+/**
+ * PX4 manual-control to LQI reference adapter.
  *
  * PX4 and the simulator both provide Hamilton q_wb ([w,x,y,z], body FRD to
  * world NED). Roll/pitch sticks command heading-relative Euler angles; yaw is
  * rate mode. PX4 positive pitch stick means nose down, so target pitch has the
- * opposite sign of the raw stick value.
+ * opposite sign of the raw stick value.  The adapter only consumes the manual
+ * reference constants of the model, so the same implementation serves both
+ * the 13-state nominal and the 19-state identified descriptors.
  */
-class LqiManualReference
+template <typename Model>
+class LqiManualReferenceT
 {
 public:
-	explicit LqiManualReference(const LqiControllerModel &model) : _model(model) {}
+	explicit LqiManualReferenceT(const Model &model) : _model(model) {}
 
 	void reset()
 	{
@@ -116,8 +121,11 @@ private:
 		return (value < -1.0f) ? -1.0f : ((value > 1.0f) ? 1.0f : value);
 	}
 
-	const LqiControllerModel &_model;
+	const Model &_model;
 	float _filtered_stick[3] {};
 	float _target_yaw{0.0f};
 	bool _initialized{false};
 };
+
+using LqiManualReference = LqiManualReferenceT<LqiControllerModel>;
+using LqiCompositeManualReference = LqiManualReferenceT<LqiCompositeControllerModel>;

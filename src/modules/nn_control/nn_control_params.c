@@ -61,3 +61,18 @@ PARAM_DEFINE_FLOAT(NN_SV_TRIM3, 0.0f);
  * @group Direct Actuator Controller
  */
 PARAM_DEFINE_INT32(NN_LQI_OUTPUT_EN, 0);
+
+/**
+ * LQI model version
+ *
+ * 0 selects the previous nominal 13-state LQI weights (unchanged), 1 selects
+ * the real-log identified 19-state composite LQI.  The model is fixed at
+ * module start; changing this parameter requires restarting the ln module.
+ *
+ * @min 0
+ * @max 1
+ * @value 0 nominal 13-state
+ * @value 1 identified 19-state composite
+ * @group Direct Actuator Controller
+ */
+PARAM_DEFINE_INT32(NN_LQI_MODEL, 0);

@@ -70,6 +70,7 @@ private:
 	void Run() override;
 	void updateSubscriptions();
 	void updateParameters(bool force = false);
+	void handleFlightPhaseTransitions();
 	bool buildInput(ControllerInput &input, hrt_abstime now);
 	bool actuatorAuthorityAllowed();
 	bool validateOutput(const ActuatorSetpoint &output);
@@ -147,6 +148,8 @@ private:
 	perf_counter_t _verification_perf{perf_alloc(PC_ELAPSED, MODULE_NAME": MAVLink verification")};
 	bool _output_enabled{false};
 	bool _last_input_valid{false};
+	bool _last_armed{false};
+	bool _takeoff_done{false};
 
 	DEFINE_PARAMETERS(
 		(ParamFloat<px4::params::NN_SV_TRIM1>) _param_servo_trim_1,

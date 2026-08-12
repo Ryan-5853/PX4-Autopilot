@@ -67,4 +67,3 @@ uint32_t ControllerBackend::verificationMacsPerInference() const
 {
 	return 0;
 }
-

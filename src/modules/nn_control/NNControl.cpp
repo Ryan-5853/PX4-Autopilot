@@ -94,6 +94,41 @@ void NNControl::updateParameters(bool force)
 	}
 }
 
+void NNControl::handleFlightPhaseTransitions()
+{
+	const bool armed = _actuator_armed.armed;
+
+	// 上锁后清空整个控制器状态，等待下一次解锁-上油门的起飞流程。
+	if (_last_armed && !armed) {
+		_backend.reset();
+		_last_sample_timestamp = 0;
+		_takeoff_done = false;
+		PX4_INFO("disarm: controller state cleared");
+	}
+
+	if (armed && !_last_armed) {
+		// 解锁本身不重置状态，只开始新一轮“等待第一次油门输出”。
+		_takeoff_done = false;
+	}
+
+	// 起飞事件 = 解锁且油门有输出（与 LQI idle 门控的判据一致）。
+	// 此时整体重置控制器：LQI 积分/执行器观测器归零，目标 yaw 在同一
+	// 控制帧从当前航向重新初始化；之后只要不打航向杆，目标航向就保持
+	// 起飞瞬间的航向。
+	const float throttle = math::constrain(_manual_control_setpoint.throttle, -1.0f, 1.0f);
+	const bool throttle_active = (throttle + 1.0f) * 0.5f > 0.0f;
+	const bool output_gate = armed && throttle_active;
+
+	if (output_gate && !_takeoff_done) {
+		_backend.reset();
+		_last_sample_timestamp = 0;
+		_takeoff_done = true;
+		PX4_INFO("takeoff: controller state reset, yaw reference = current heading");
+	}
+
+	_last_armed = armed;
+}
+
 bool NNControl::buildInput(ControllerInput &input, hrt_abstime now)
 {
 	if (_vehicle_attitude.timestamp_sample == 0
@@ -514,6 +549,7 @@ void NNControl::Run()
 	perf_begin(_cycle_perf);
 	perf_count(_interval_perf);
 	updateSubscriptions();
+	handleFlightPhaseTransitions();
 	updateParameters();
 	handleVerificationRequest();
 

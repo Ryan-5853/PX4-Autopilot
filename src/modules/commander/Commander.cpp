@@ -552,12 +552,12 @@ transition_result_t Commander::arm(arm_disarm_reason_t calling_reason, bool run_
 		return TRANSITION_DENIED;
 	}
 
-	// allow a grace period for re-arming: preflight checks don't need to pass during that time, for example for accidental in-air disarming
-	if (calling_reason == arm_disarm_reason_t::rc_switch
-	    && ((_last_disarmed_timestamp != 0) && (hrt_elapsed_time(&_last_disarmed_timestamp) < 5_s))) {
-
-		run_preflight_checks = false;
-	}
+	// Disabled: every arm request must pass the full preflight/arming checks,
+	// including the throttle check. No 5 s re-arm grace period is granted.
+	// if (calling_reason == arm_disarm_reason_t::rc_switch
+	//     && ((_last_disarmed_timestamp != 0) && (hrt_elapsed_time(&_last_disarmed_timestamp) < 5_s))) {
+	// 	run_preflight_checks = false;
+	// }
 
 	if (run_preflight_checks) {
 		if (_vehicle_control_mode.flag_control_manual_enabled) {
