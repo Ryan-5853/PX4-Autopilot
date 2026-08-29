@@ -129,12 +129,12 @@ static constexpr LqiControllerModel kModel {
 	872.981018f,
 	872.981018f,
 	0.104719758f,
-	0.209439501f,
-	0.209439501f,
-	1.20000005f,
+	0.314159304f,
+	0.314159304f,
+	1.5f,
 	kManualCommandDecay,
 	364u,
-	0x3b852df0u,
+	0x82c96d28u,
 };
 
 } // namespace lqi_nominal
