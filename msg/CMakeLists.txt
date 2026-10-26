@@ -110,6 +110,8 @@ set(msg_files
 	GpsDump.msg
 	GpsInjectData.msg
 	Gripper.msg
+	GsLinkControl.msg
+	GsLinkStatus.msg
 	HealthReport.msg
 	HeaterStatus.msg
 	HoverThrustEstimate.msg

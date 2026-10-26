@@ -581,8 +581,13 @@ Mavlink::mavlink_open_uart(const int baud, const char *uart_name, const FLOW_CON
 	case 3000000: speed = B3000000; break;
 #endif
 
+#ifdef B4000000
+
+	case 4000000: speed = B4000000; break;
+#endif
+
 	default:
-		PX4_ERR("Unsupported baudrate: %d\n\tsupported examples:\n\t9600, 19200, 38400, 57600\t\n115200\n230400\n460800\n500000\n921600\n1000000\n",
+		PX4_ERR("Unsupported baudrate: %d\n\tsupported examples:\n\t9600, 19200, 38400, 57600\t\n115200\n230400\n460800\n500000\n921600\n1000000\n2000000\n3000000\n4000000\n",
 			baud);
 		return -EINVAL;
 	}
@@ -1932,7 +1937,7 @@ Mavlink::task_main(int argc, char *argv[])
 				err_flag = true;
 			}
 
-			if (_baudrate < 9600 || _baudrate > 3000000) {
+			if (_baudrate < 9600 || _baudrate > 4000000) {
 				PX4_ERR("invalid baud rate '%s'", myoptarg);
 				err_flag = true;
 			}
@@ -3374,7 +3379,7 @@ $ mavlink stream -u 14556 -s HIGHRES_IMU -r 50
 	PRINT_MODULE_USAGE_NAME("mavlink", "communication");
 	PRINT_MODULE_USAGE_COMMAND_DESCR("start", "Start a new instance");
 	PRINT_MODULE_USAGE_PARAM_STRING('d', "/dev/ttyS1", "<file:dev>", "Select Serial Device", true);
-	PRINT_MODULE_USAGE_PARAM_INT('b', 57600, 9600, 3000000, "Baudrate (can also be p:<param_name>)", true);
+	PRINT_MODULE_USAGE_PARAM_INT('b', 57600, 9600, 4000000, "Baudrate (can also be p:<param_name>)", true);
 	PRINT_MODULE_USAGE_PARAM_INT('r', 0, 10, 10000000, "Maximum sending data rate in B/s (if 0, use baudrate / 20)", true);
 #if defined(CONFIG_NET) || defined(__PX4_POSIX)
 	PRINT_MODULE_USAGE_PARAM_FLAG('p', "Enable Broadcast", true);

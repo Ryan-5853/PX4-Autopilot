@@ -91,6 +91,7 @@ public:
 
 protected:
 	static constexpr uint64_t VALID_DATA_MIN_INTERVAL_US{1_s / 3}; // assume valid RC input is at least 3 Hz
+	static constexpr hrt_abstime MANUAL_SWITCHES_PUBLISH_INTERVAL{100_ms};
 
 	void Run() override;
 

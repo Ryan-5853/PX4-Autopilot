@@ -26,6 +26,8 @@ px4_add_module(
 		NNControl.cpp
 		ControllerBackend.hpp
 		ControllerTypes.hpp
+		FinalMotorOutputMap.hpp
+		GroundStationGate.hpp
 		NNVerificationProtocol.hpp
 		${controller_backend_sources}
 	MODULE_CONFIG

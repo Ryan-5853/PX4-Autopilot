@@ -1,0 +1,6 @@
+menuconfig MODULES_GS_LINK
+	bool "GS-Link serial transport"
+	default n
+	---help---
+		Build the GS-Link v1 binary serial transport. The link carries
+		RC-supervised ground-station commands and minimal telemetry.

@@ -6,12 +6,18 @@
 
 #include "NNControl.hpp"
 
+#include "FinalMotorOutputMap.hpp"
+
 #include <cmath>
 #include <cstring>
 
 #include <mathlib/math/Functions.hpp>
+#include <px4_platform_common/events.h>
 #include <px4_platform_common/log.h>
 #include <px4_platform_common/time.h>
+
+static_assert(static_cast<int32_t>(events::util::hash_32_fnv1a_const("Ground Station")) == -696130346,
+	      "update COM_MODE1_HASH in airframe 22001 when the external mode name changes");
 
 static_assert(nn_verification::request::kObservationFirst
 	      + ControllerBackend::kVerificationInputSize <= debug_array_s::ARRAY_SIZE,
@@ -28,6 +34,18 @@ NNControl::NNControl() :
 
 NNControl::~NNControl()
 {
+	if (_external_mode_registered) {
+		unregister_ext_component_s request{};
+		request.timestamp = hrt_absolute_time();
+		constexpr char mode_name[] = "Ground Station";
+		static_assert(sizeof(mode_name) <= sizeof(request.name), "external mode name too long");
+		memcpy(request.name, mode_name, sizeof(mode_name));
+		request.arming_check_id = _external_arming_check_id;
+		request.mode_id = _external_mode_id;
+		request.mode_executor_id = -1;
+		_unregister_ext_component_pub.publish(request);
+	}
+
 	_vehicle_angular_velocity_sub.unregisterCallback();
 	perf_free(_cycle_perf);
 	perf_free(_inference_perf);
@@ -70,7 +88,11 @@ void NNControl::updateSubscriptions()
 	_battery_status_sub.update(&_battery_status);
 	_failsafe_flags_sub.update(&_failsafe_flags);
 	_esc_status_sub.update(&_esc_status);
+	_input_rc_sub.update(&_input_rc);
 	_manual_control_setpoint_sub.update(&_manual_control_setpoint);
+	_manual_control_switches_sub.update(&_manual_control_switches);
+	_gs_link_control_sub.update(&_gs_link_control);
+
 	_vehicle_acceleration_sub.update(&_vehicle_acceleration);
 	_vehicle_angular_velocity_sub.update(&_vehicle_angular_velocity);
 	_vehicle_attitude_sub.update(&_vehicle_attitude);
@@ -91,6 +113,283 @@ void NNControl::updateParameters(bool force)
 		trims.trim[1] = _param_servo_trim_2.get();
 		trims.trim[2] = _param_servo_trim_3.get();
 		_actuator_servos_trim_pub.publish(trims);
+	}
+}
+
+void NNControl::updateExternalModeRegistration(hrt_abstime now)
+{
+	register_ext_component_reply_s reply;
+	int max_updates = register_ext_component_reply_s::ORB_QUEUE_LENGTH;
+
+	while (_register_ext_component_reply_sub.update(&reply) && --max_updates >= 0) {
+		if (!_external_mode_registered && reply.request_id == _external_mode_request_id) {
+			if (reply.success && reply.mode_id >= vehicle_status_s::NAVIGATION_STATE_EXTERNAL1
+			    && reply.mode_id <= vehicle_status_s::NAVIGATION_STATE_EXTERNAL8
+			    && reply.arming_check_id >= 0) {
+				_external_mode_id = reply.mode_id;
+				_external_arming_check_id = reply.arming_check_id;
+				_external_mode_registered = true;
+				publishExternalModeControlMode(now);
+
+				const unsigned external_mode_number =
+					reply.mode_id - vehicle_status_s::NAVIGATION_STATE_EXTERNAL1 + 1;
+				PX4_INFO("ground station registered as External Mode %u (nav_state %d, arming check %d)",
+					 external_mode_number, static_cast<int>(reply.mode_id),
+					 static_cast<int>(reply.arming_check_id));
+
+				// Keep RC mode slot 6 mapped to the actual registered external mode.
+				// PX4 does not let a component request a specific external mode index.
+				const int32_t configured_mode = 100 + static_cast<int32_t>(reply.mode_id)
+							       - vehicle_status_s::NAVIGATION_STATE_EXTERNAL1;
+				const param_t mode_param = param_find("COM_FLTMODE6");
+				int32_t current_mode{-1};
+
+				if (mode_param != PARAM_INVALID && param_get(mode_param, &current_mode) == PX4_OK
+				    && current_mode != configured_mode) {
+					if (param_set(mode_param, &configured_mode) == PX4_OK) {
+						PX4_INFO("RC mode slot 6 mapped to External Mode %u", external_mode_number);
+					}
+				}
+
+			} else {
+				PX4_ERR("ground-station external mode registration rejected");
+			}
+		}
+	}
+
+	arming_check_request_s request;
+	max_updates = 4;
+
+	while (_arming_check_request_sub.update(&request) && --max_updates >= 0) {
+		if (_external_mode_registered) {
+			publishArmingCheckReply(request);
+		}
+	}
+
+	// Publish once. Retrying the same mode registration after a lost reply can
+	// create a second external mode because the first one is already valid in
+	// Commander even though the reply was not observed.
+	if (!_external_mode_registered && _external_mode_request_id == 0) {
+		_external_mode_request_id = static_cast<uint64_t>(hrt_absolute_time()) | 1;
+
+		register_ext_component_request_s mode_request{};
+		mode_request.timestamp = now;
+		mode_request.request_id = _external_mode_request_id;
+		constexpr char mode_name[] = "Ground Station";
+		static_assert(sizeof(mode_name) <= sizeof(mode_request.name), "external mode name too long");
+		memcpy(mode_request.name, mode_name, sizeof(mode_name));
+		mode_request.px4_ros2_api_version = register_ext_component_request_s::LATEST_PX4_ROS2_API_VERSION;
+		mode_request.register_arming_check = true;
+		mode_request.register_mode = true;
+		mode_request.register_mode_executor = false;
+		mode_request.enable_replace_internal_mode = false;
+		mode_request.activate_mode_immediately = false;
+		_register_ext_component_request_pub.publish(mode_request);
+	}
+}
+
+void NNControl::publishExternalModeControlMode(hrt_abstime now)
+{
+	// Match PX4 Manual mode for a direct controller: sticks are active and the
+	// attitude/rate path is in the control-mode contract, but position, altitude
+	// and climb-rate control are not. The default external-mode flags enable all
+	// of these and make the multicopter land detector wait for a descent setpoint,
+	// which prevents a valid RC disarm on a static bench.
+	vehicle_control_mode_s control_mode{};
+	control_mode.timestamp = now;
+	control_mode.source_id = _external_mode_id;
+	control_mode.flag_control_manual_enabled = true;
+	control_mode.flag_control_attitude_enabled = true;
+	control_mode.flag_control_rates_enabled = true;
+	control_mode.flag_control_allocation_enabled = true;
+	_config_control_setpoints_pub.publish(control_mode);
+}
+
+void NNControl::publishArmingCheckReply(const arming_check_request_s &request)
+{
+	arming_check_reply_s reply{};
+	reply.timestamp = hrt_absolute_time();
+	reply.request_id = request.request_id;
+	reply.registration_id = _external_arming_check_id;
+	reply.health_component_index = arming_check_reply_s::HEALTH_COMPONENT_INDEX_NONE;
+
+	// GS-Link freshness must not participate in PX4's mode availability.
+	// Otherwise a short DATA_RC timeout sets mode_req_other and the Commander
+	// failsafe falls through RTL/Land/Descend. GroundStationGate owns that
+	// timeout and falls back to RC while retaining the selected mode.
+	reply.can_arm_and_run = rcManualControlValid(reply.timestamp);
+	reply.mode_req_manual_control = true;
+	reply.mode_req_attitude = true;
+	reply.mode_req_angular_velocity = true;
+	_arming_check_reply_pub.publish(reply);
+}
+
+bool NNControl::rcManualControlValid(hrt_abstime now)
+{
+	const bool sample_valid = _manual_control_setpoint.valid
+				  && _manual_control_setpoint.timestamp_sample != 0
+				  && now >= _manual_control_setpoint.timestamp_sample
+				  && now - _manual_control_setpoint.timestamp_sample <= kManualControlTimeout;
+
+	if (!sample_valid) {
+		return false;
+	}
+
+	const bool hil = _vehicle_status.hil_state == vehicle_status_s::HIL_STATE_ON;
+	const uint8_t source = _manual_control_setpoint.data_source;
+
+	// HIL keeps the existing WebUI/MAVLink pilot path. Real flight only accepts
+	// a physical RC source; MAVLink MANUAL_CONTROL is reserved for the
+	// separately gated ground-station submode.
+	if (hil) {
+		return source == manual_control_setpoint_s::SOURCE_RC
+		       || (source >= manual_control_setpoint_s::SOURCE_MAVLINK_0
+			   && source <= manual_control_setpoint_s::SOURCE_MAVLINK_5);
+	}
+
+	if (source != manual_control_setpoint_s::SOURCE_RC) {
+		return false;
+	}
+
+	// Reject RC_CHANNELS_OVERRIDE or any other MAVLink-injected "RC" sample.
+	// Otherwise a ground station could bypass the channel-8 switch by
+	// publishing raw RC channels.
+	return _input_rc.timestamp_last_signal != 0
+	       && now >= _input_rc.timestamp_last_signal
+	       && now - _input_rc.timestamp_last_signal <= kManualControlTimeout
+	       && !_input_rc.rc_lost
+	       && !_input_rc.rc_failsafe
+	       && _input_rc.input_source != input_rc_s::RC_INPUT_SOURCE_UNKNOWN
+	       && _input_rc.input_source != input_rc_s::RC_INPUT_SOURCE_MAVLINK;
+}
+
+bool NNControl::flightModeSlotValid(hrt_abstime now, uint8_t &mode_slot)
+{
+	if (!rcManualControlValid(now)
+	    || _manual_control_switches.timestamp_sample == 0
+	    || now < _manual_control_switches.timestamp_sample
+	    || now - _manual_control_switches.timestamp_sample > kManualControlTimeout) {
+		return false;
+	}
+
+	mode_slot = _manual_control_switches.mode_slot;
+	return mode_slot >= manual_control_switches_s::MODE_SLOT_1
+	       && mode_slot <= manual_control_switches_s::MODE_SLOT_6;
+}
+
+bool NNControl::gsLinkControlValid(hrt_abstime now)
+{
+	const int32_t timeout_ms = math::constrain<int32_t>(_param_gs_timeout_ms.get(), 50, 1000);
+	const hrt_abstime timeout = static_cast<hrt_abstime>(timeout_ms) * 1000;
+
+	if (!_gs_link_control.valid || _gs_link_control.timestamp_sample == 0
+	    || now < _gs_link_control.timestamp_sample
+	    || now - _gs_link_control.timestamp_sample > timeout) {
+		return false;
+	}
+
+	return PX4_ISFINITE(_gs_link_control.roll)
+	       && PX4_ISFINITE(_gs_link_control.pitch)
+	       && PX4_ISFINITE(_gs_link_control.yaw)
+	       && PX4_ISFINITE(_gs_link_control.throttle);
+}
+
+void NNControl::publishGsLinkStatus(hrt_abstime now)
+{
+	if (now - _last_gs_status_publish < 20_ms) {
+		return;
+	}
+
+	gs_link_status_s status{};
+	status.timestamp = now;
+	status.armed = _actuator_armed.armed;
+	status.rc_valid = rcManualControlValid(now);
+	status.rc_switch_valid = _flight_mode_slot_valid;
+	status.rc_switch_selected = _ground_station_mode_selected;
+	status.gs_mode_active = _ground_station_gate.source() == GroundStationGate::Source::GroundStation;
+	status.failsafe = _failsafe_flags.manual_control_signal_lost
+			  || _failsafe_flags.battery_unhealthy
+			  || _failsafe_flags.attitude_invalid
+			  || _failsafe_flags.angular_velocity_invalid
+			  || _failsafe_flags.fd_critical_failure;
+	status.command_busy = false;
+	status.takeoff_active = false;
+	status.landing_active = false;
+	status.rc_switch = static_cast<float>(_flight_mode_slot);
+	_gs_link_status_pub.publish(status);
+	_last_gs_status_publish = now;
+}
+
+void NNControl::updateManualSource(hrt_abstime now)
+{
+	const bool rc_valid = rcManualControlValid(now);
+	const bool manual_fresh = _manual_control_setpoint.valid
+				  && _manual_control_setpoint.timestamp_sample != 0
+				  && now >= _manual_control_setpoint.timestamp_sample
+				  && now - _manual_control_setpoint.timestamp_sample <= kManualControlTimeout;
+	_manual_control_wrong_source = manual_fresh && !rc_valid;
+
+	_flight_mode_slot_valid = flightModeSlotValid(now, _flight_mode_slot);
+	_gs_link_input_valid = gsLinkControlValid(now);
+
+	GroundStationGate::Config config{};
+	config.enabled = _param_gs_enable.get() != 0;
+	const int32_t configured_mode_slot = _param_gs_mode_slot.get();
+	config.mode_slot = configured_mode_slot >= manual_control_switches_s::MODE_SLOT_1
+			   && configured_mode_slot <= manual_control_switches_s::MODE_SLOT_6
+			   ? static_cast<uint8_t>(configured_mode_slot) : 0;
+	config.entry_delay_us = 100_ms;
+
+	const bool requested_ground_station = _flight_mode_slot_valid
+					     && _flight_mode_slot == config.mode_slot;
+	const bool external_mode_active = _external_mode_registered
+					 && _vehicle_status.nav_state == _external_mode_id;
+	_ground_station_mode_selected = requested_ground_station && external_mode_active;
+
+	GroundStationGate::Input input{};
+	input.now = now;
+	input.armed = _actuator_armed.armed;
+	input.rc_valid = rc_valid;
+	input.mode_slot_valid = _flight_mode_slot_valid;
+	input.mode_slot = _flight_mode_slot;
+	input.external_mode_active = external_mode_active;
+	input.ground_station_valid = _gs_link_input_valid;
+
+	const GroundStationGate::Source previous_source = _ground_station_gate.source();
+	const GroundStationGate::Source source = _ground_station_gate.update(config, input);
+
+	switch (source) {
+	case GroundStationGate::Source::GroundStation:
+		_effective_manual_control = {};
+		_effective_manual_control.timestamp = now;
+		_effective_manual_control.timestamp_sample = _gs_link_control.timestamp_sample;
+		_effective_manual_control.valid = true;
+		_effective_manual_control.roll = _gs_link_control.roll;
+		_effective_manual_control.pitch = _gs_link_control.pitch;
+		_effective_manual_control.yaw = _gs_link_control.yaw;
+		_effective_manual_control.throttle = _gs_link_control.throttle;
+		_manual_command_valid = _gs_link_input_valid;
+		break;
+
+	case GroundStationGate::Source::Rc:
+		_effective_manual_control = _manual_control_setpoint;
+		_manual_command_valid = rc_valid;
+		break;
+
+	default:
+		_effective_manual_control = {};
+		_manual_command_valid = false;
+		break;
+	}
+
+	if (source != previous_source) {
+		if (source == GroundStationGate::Source::GroundStation) {
+			PX4_INFO("manual source: ground station (GS-Link), RC mode slot %u",
+				 static_cast<unsigned>(_flight_mode_slot));
+
+		} else if (previous_source == GroundStationGate::Source::GroundStation) {
+			PX4_INFO("manual source: RC (ground-station control interrupted)");
+		}
 	}
 }
 
@@ -115,7 +414,8 @@ void NNControl::handleFlightPhaseTransitions()
 	// 此时整体重置控制器：LQI 积分/执行器观测器归零，目标 yaw 在同一
 	// 控制帧从当前航向重新初始化；之后只要不打航向杆，目标航向就保持
 	// 起飞瞬间的航向。
-	const float throttle = math::constrain(_manual_control_setpoint.throttle, -1.0f, 1.0f);
+	const float throttle = _manual_command_valid
+			       ? math::constrain(_effective_manual_control.throttle, -1.0f, 1.0f) : 0.f;
 	const bool throttle_active = (throttle + 1.0f) * 0.5f > 0.0f;
 	const bool output_gate = armed && throttle_active;
 
@@ -182,19 +482,16 @@ bool NNControl::buildInput(ControllerInput &input, hrt_abstime now)
 		input.heading = 0.f;
 	}
 
-	const bool manual_valid = _manual_control_setpoint.valid
-				  && _manual_control_setpoint.timestamp_sample != 0
-				  && now - _manual_control_setpoint.timestamp_sample <= kManualControlTimeout;
-
-	if (!manual_valid) {
-		_inhibit_reason = InhibitReason::StaleManualControl;
+	if (!_manual_command_valid) {
+		_inhibit_reason = _manual_control_wrong_source
+				  ? InhibitReason::ManualControlNotRc : InhibitReason::StaleManualControl;
 		return false;
 	}
 
-	input.rc_roll = _manual_control_setpoint.roll;
-	input.rc_pitch = _manual_control_setpoint.pitch;
-	input.rc_yaw = _manual_control_setpoint.yaw;
-	input.rc_throttle = _manual_control_setpoint.throttle;
+	input.rc_roll = _effective_manual_control.roll;
+	input.rc_pitch = _effective_manual_control.pitch;
+	input.rc_yaw = _effective_manual_control.yaw;
+	input.rc_throttle = _effective_manual_control.throttle;
 	input.rc_aux[0] = _manual_control_setpoint.aux1;
 	input.rc_aux[1] = _manual_control_setpoint.aux2;
 	input.rc_aux[2] = _manual_control_setpoint.aux3;
@@ -549,8 +846,11 @@ void NNControl::Run()
 	perf_begin(_cycle_perf);
 	perf_count(_interval_perf);
 	updateSubscriptions();
-	handleFlightPhaseTransitions();
 	updateParameters();
+	updateExternalModeRegistration(cycle_start);
+	updateManualSource(cycle_start);
+	handleFlightPhaseTransitions();
+	publishGsLinkStatus(cycle_start);
 	handleVerificationRequest();
 
 	ControllerInput input{};
@@ -590,6 +890,12 @@ void NNControl::Run()
 
 	if (inference_valid) {
 		inference_valid = validateOutput(output);
+
+		// Validate the controller-domain output before calibration so an
+		// out-of-range command cannot be hidden by the final scaling.
+		if (inference_valid) {
+			final_motor_output_map::apply(output);
+		}
 	}
 
 	bool authority = false;
@@ -653,6 +959,7 @@ const char *NNControl::reasonString(InhibitReason reason)
 	case InhibitReason::StaleAngularVelocity: return "angular velocity missing/stale";
 	case InhibitReason::StaleAcceleration: return "acceleration missing/stale";
 	case InhibitReason::StaleManualControl: return "manual control missing/stale";
+	case InhibitReason::ManualControlNotRc: return "manual control is not RC";
 	case InhibitReason::InvalidInput: return "non-finite input";
 	case InhibitReason::BackendUnavailable: return "backend unavailable/rejected";
 	case InhibitReason::InvalidOutput: return "invalid controller output";
@@ -686,7 +993,32 @@ int NNControl::print_status()
 {
 	const float interval_s = perf_mean(_interval_perf);
 	const float measured_rate_hz = interval_s > 0.f ? 1.f / interval_s : 0.f;
+	const auto source = _ground_station_gate.source();
+	const char *source_name = "none";
+
+	if (source == GroundStationGate::Source::Rc) {
+		source_name = "RC";
+
+	} else if (source == GroundStationGate::Source::GroundStation) {
+		source_name = "ground station";
+	}
+
 	PX4_INFO("backend: %s, %s", _backend.name(), _backend.mode());
+	PX4_INFO("manual source: %s, RC data source: %u, GS enabled: %d",
+		 source_name, (unsigned)_manual_control_setpoint.data_source,
+		 (int)_param_gs_enable.get());
+	PX4_INFO("RC flight mode: slot %u, target slot %ld, valid %d, GS slot selected %d",
+		 (unsigned)_flight_mode_slot, (long)_param_gs_mode_slot.get(),
+		 _flight_mode_slot_valid ? 1 : 0, _ground_station_mode_selected ? 1 : 0);
+	PX4_INFO("external mode: %s, id %d, arming check %d",
+		 _external_mode_registered ? "registered" : "not registered",
+		 static_cast<int>(_external_mode_id), static_cast<int>(_external_arming_check_id));
+	PX4_INFO("ground station: GS-Link %s, age %lld ms, quality %u, timeout %ld ms",
+		 _gs_link_input_valid ? "fresh" : "missing/stale",
+		 (long long)(_gs_link_control.timestamp_sample == 0 ? -1
+			     : (long long)(hrt_elapsed_time(&_gs_link_control.timestamp_sample) / 1000)),
+		 (unsigned)_gs_link_control.link_quality,
+		 (long)_param_gs_timeout_ms.get());
 	PX4_INFO("target 500 Hz, measured %.1f Hz", (double)measured_rate_hz);
 	PX4_INFO("verification weights: %lu bytes, checksum: 0x%08lx",
 		 (unsigned long)_backend.verificationWeightBytes(),

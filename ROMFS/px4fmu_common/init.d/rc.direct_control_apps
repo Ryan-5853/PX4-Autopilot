@@ -6,5 +6,10 @@
 # Retain PX4 arming/landed-state handling, but do not start a control allocator
 # or any PX4 attitude, rate, position or flight-mode controller.
 land_detector start multicopter
+
+# This firmware image targets the real-log identified 19-state composite LQI.
+# nn_control latches the model at startup, so select it before starting.
+param set NN_LQI_MODEL 1
+gs_link start -d /dev/ttyS0 -b 4000000
 nn_control start
 

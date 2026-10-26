@@ -7,6 +7,7 @@
 #pragma once
 
 #include "ControllerBackend.hpp"
+#include "GroundStationGate.hpp"
 #include "NNVerificationProtocol.hpp"
 
 #include <drivers/drv_hrt.h>
@@ -24,14 +25,24 @@
 #include <uORB/topics/actuator_motors.h>
 #include <uORB/topics/actuator_servos.h>
 #include <uORB/topics/actuator_servos_trim.h>
+#include <uORB/topics/arming_check_reply.h>
+#include <uORB/topics/arming_check_request.h>
 #include <uORB/topics/battery_status.h>
 #include <uORB/topics/failsafe_flags.h>
+#include <uORB/topics/gs_link_control.h>
+#include <uORB/topics/gs_link_status.h>
+#include <uORB/topics/input_rc.h>
 #include <uORB/topics/esc_status.h>
 #include <uORB/topics/manual_control_setpoint.h>
+#include <uORB/topics/manual_control_switches.h>
 #include <uORB/topics/parameter_update.h>
+#include <uORB/topics/register_ext_component_reply.h>
+#include <uORB/topics/register_ext_component_request.h>
+#include <uORB/topics/unregister_ext_component.h>
 #include <uORB/topics/vehicle_acceleration.h>
 #include <uORB/topics/vehicle_angular_velocity.h>
 #include <uORB/topics/vehicle_attitude.h>
+#include <uORB/topics/vehicle_control_mode.h>
 #include <uORB/topics/vehicle_local_position.h>
 #include <uORB/topics/vehicle_status.h>
 
@@ -61,6 +72,7 @@ private:
 		StaleAngularVelocity,
 		StaleAcceleration,
 		StaleManualControl,
+		ManualControlNotRc,
 		InvalidInput,
 		BackendUnavailable,
 		InvalidOutput,
@@ -70,8 +82,16 @@ private:
 	void Run() override;
 	void updateSubscriptions();
 	void updateParameters(bool force = false);
+	void updateExternalModeRegistration(hrt_abstime now);
+	void publishExternalModeControlMode(hrt_abstime now);
+	void publishArmingCheckReply(const arming_check_request_s &request);
+	void updateManualSource(hrt_abstime now);
 	void handleFlightPhaseTransitions();
 	bool buildInput(ControllerInput &input, hrt_abstime now);
+	bool rcManualControlValid(hrt_abstime now);
+	bool flightModeSlotValid(hrt_abstime now, uint8_t &mode_slot);
+	bool gsLinkControlValid(hrt_abstime now);
+	void publishGsLinkStatus(hrt_abstime now);
 	bool actuatorAuthorityAllowed();
 	bool validateOutput(const ActuatorSetpoint &output);
 	void publishOutput(const ActuatorSetpoint *output, hrt_abstime now);
@@ -97,14 +117,27 @@ private:
 	uORB::Publication<actuator_motors_s> _actuator_motors_pub{ORB_ID(actuator_motors)};
 	uORB::Publication<actuator_servos_s> _actuator_servos_pub{ORB_ID(actuator_servos)};
 	uORB::Publication<actuator_servos_trim_s> _actuator_servos_trim_pub{ORB_ID(actuator_servos_trim)};
+	uORB::Publication<gs_link_status_s> _gs_link_status_pub{ORB_ID(gs_link_status)};
 	uORB::Publication<debug_array_s> _verification_response_pub{ORB_ID(debug_array)};
+	uORB::Publication<arming_check_reply_s> _arming_check_reply_pub{ORB_ID(arming_check_reply)};
+	uORB::Publication<register_ext_component_request_s>
+	_register_ext_component_request_pub{ORB_ID(register_ext_component_request)};
+	uORB::Publication<unregister_ext_component_s>
+	_unregister_ext_component_pub{ORB_ID(unregister_ext_component)};
+	uORB::Publication<vehicle_control_mode_s>
+	_config_control_setpoints_pub{ORB_ID(config_control_setpoints)};
 
 	uORB::Subscription _actuator_armed_sub{ORB_ID(actuator_armed)};
 	uORB::Subscription _battery_status_sub{ORB_ID(battery_status)};
 	uORB::Subscription _failsafe_flags_sub{ORB_ID(failsafe_flags)};
 	uORB::Subscription _esc_status_sub{ORB_ID(esc_status)};
+	uORB::Subscription _input_rc_sub{ORB_ID(input_rc)};
 	uORB::Subscription _manual_control_setpoint_sub{ORB_ID(manual_control_setpoint)};
+	uORB::Subscription _manual_control_switches_sub{ORB_ID(manual_control_switches)};
 	uORB::SubscriptionInterval _parameter_update_sub{ORB_ID(parameter_update), 1_s};
+	uORB::Subscription _gs_link_control_sub{ORB_ID(gs_link_control)};
+	uORB::Subscription _arming_check_request_sub{ORB_ID(arming_check_request)};
+	uORB::Subscription _register_ext_component_reply_sub{ORB_ID(register_ext_component_reply)};
 	uORB::Subscription _verification_request_sub{ORB_ID(debug_array)};
 	uORB::Subscription _vehicle_acceleration_sub{ORB_ID(vehicle_acceleration)};
 	uORB::SubscriptionCallbackWorkItem _vehicle_angular_velocity_sub{this, ORB_ID(vehicle_angular_velocity)};
@@ -116,7 +149,11 @@ private:
 	battery_status_s _battery_status{};
 	failsafe_flags_s _failsafe_flags{};
 	esc_status_s _esc_status{};
+	input_rc_s _input_rc{};
 	manual_control_setpoint_s _manual_control_setpoint{};
+	manual_control_switches_s _manual_control_switches{};
+	gs_link_control_s _gs_link_control{};
+	manual_control_setpoint_s _effective_manual_control{};
 	vehicle_acceleration_s _vehicle_acceleration{};
 	vehicle_angular_velocity_s _vehicle_angular_velocity{};
 	vehicle_attitude_s _vehicle_attitude{};
@@ -124,6 +161,7 @@ private:
 	vehicle_status_s _vehicle_status{};
 
 	ControllerBackend _backend{};
+	GroundStationGate _ground_station_gate{};
 	InhibitReason _inhibit_reason{InhibitReason::Disarmed};
 	uint32_t _inference_count{0};
 	uint32_t _rejected_count{0};
@@ -150,10 +188,24 @@ private:
 	bool _last_input_valid{false};
 	bool _last_armed{false};
 	bool _takeoff_done{false};
+	bool _manual_command_valid{false};
+	bool _manual_control_wrong_source{false};
+	bool _flight_mode_slot_valid{false};
+	bool _ground_station_mode_selected{false};
+	uint8_t _flight_mode_slot{0};
+	bool _gs_link_input_valid{false};
+	bool _external_mode_registered{false};
+	int8_t _external_mode_id{-1};
+	int8_t _external_arming_check_id{-1};
+	uint64_t _external_mode_request_id{0};
+	hrt_abstime _last_gs_status_publish{0};
 
 	DEFINE_PARAMETERS(
 		(ParamFloat<px4::params::NN_SV_TRIM1>) _param_servo_trim_1,
 		(ParamFloat<px4::params::NN_SV_TRIM2>) _param_servo_trim_2,
-		(ParamFloat<px4::params::NN_SV_TRIM3>) _param_servo_trim_3
+		(ParamFloat<px4::params::NN_SV_TRIM3>) _param_servo_trim_3,
+		(ParamInt<px4::params::NN_GS_EN>) _param_gs_enable,
+		(ParamInt<px4::params::NN_GS_MODE_SLOT>) _param_gs_mode_slot,
+		(ParamInt<px4::params::NN_GS_TIMEOUT_MS>) _param_gs_timeout_ms
 	)
 };

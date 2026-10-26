@@ -16,9 +16,43 @@
 
 . ${R}etc/init.d/rc.direct_control_defaults
 
+# RC is the sole Commander manual-control source in real flight. HIL keeps the
+# WebUI/MAVLink pilot path used by the existing simulation workflow.
+if param greater SYS_HITL 0
+then
+	param set COM_RC_IN_MODE 2
+else
+	param set COM_RC_IN_MODE 0
+fi
+
+# TELEM1 (SERIAL1) is the ESP32 link. GS-Link v1 is the sole runtime owner of
+# /dev/ttyS0; MAVLink must not claim this port. USB MAVLink remains available
+# for QGC through /dev/ttyACM0.
+param set MAV_0_CONFIG 0
+param set SER_TEL1_BAUD 4000000
+# Enable the RC-supervised ground-station input by default. A saved user value
+# still takes precedence; actuator authority remains separately controlled by
+# NN_LQI_OUTPUT_EN.
+param set-default NN_GS_EN 1
+
+# PX4 assigns external modes by FNV-1a name hash, not by request order. Reserve
+# COM_MODE0 for External Mode 1 and pin the nn_control name "Ground Station"
+# to COM_MODE1 so it is always assigned External Mode 2 (nav_state 24).
+param set COM_MODE0_HASH -301203826
+param set COM_MODE1_HASH -696130346
+param set-default RC_MAP_FLTMODE 8
+param set-default COM_FLTMODE1 0
+param set-default COM_FLTMODE6 101
+
 # Physical outputs M1-M4 share TIM1, M5-M6 share TIM3 and M7-M8 share
 # TIM4. M1/M2 drive the upper/lower rotor motors; M6/M7/M8 drive the
 # three swashplate servos.
+#
+# Bidirectional DShot reports electrical RPM. The 2026-10-26 vehicle uses
+# 28 motor magnets; the logs were collected with the incorrect default of 14,
+# which doubled every ESC RPM entering the LQI observer.
+param set MOT_POLE_COUNT 28
+param set DSHOT_BIDIR_EN 1
 param set-default PWM_MAIN_TIM0 400
 param set-default PWM_MAIN_TIM1 333
 param set-default PWM_MAIN_TIM2 333

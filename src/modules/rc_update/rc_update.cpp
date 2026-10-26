@@ -630,8 +630,9 @@ void RCUpdate::UpdateManualSwitches(const hrt_abstime &timestamp_sample)
 
 		const bool switches_changed = (switches != _manual_switches_last_publish);
 
-		// publish immediately on change or at ~1 Hz
-		if (switches_changed || (hrt_elapsed_time(&_manual_switches_last_publish.timestamp) >= 1_s)) {
+		// Publish immediately on change and otherwise at 10 Hz.
+		if (switches_changed
+		    || (hrt_elapsed_time(&_manual_switches_last_publish.timestamp) >= MANUAL_SWITCHES_PUBLISH_INTERVAL)) {
 			uint32_t switch_changes = _manual_switches_last_publish.switch_changes;
 
 			if (switches_changed) {

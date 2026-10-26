@@ -24,6 +24,7 @@ CONFIG_DRIVERS_UAVCAN=n
 # manual control, land detector and Navigator remain enabled by default for
 # safety-state management and protective actions.
 CONFIG_MODULES_NN_CONTROL=y
+CONFIG_MODULES_GS_LINK=y
 CONFIG_NN_CONTROL_BACKEND_LQR=y
 CONFIG_MODULES_SIMULATION_PWM_OUT_SIM=y
 CONFIG_MODULES_CONTROL_ALLOCATOR=n

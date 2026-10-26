@@ -516,16 +516,31 @@ bool LoggedTopics::initialize_logged_topics(SDLogProfileMask profile)
 {
 	(void)profile;
 
-	// Parameter-identification logging: force 500 Hz (2 ms), instance 0 only.
-	// Only these topics are logged; profile/file topic sets are intentionally
-	// disabled so 500 Hz writes are not crowded out by other log traffic.
+	// Parameter-identification logging: force the five calibration-critical
+	// topics at native rate.  Diagnostic topics are added at lower rates so
+	// 5-8 Hz oscillation analysis is possible without crowding the write path.
 	add_topic("vehicle_attitude",          0, 0); // ~534 Hz, offline -> 500
 	add_topic("vehicle_angular_velocity",  0, 0); // 1000 -> ~500
 	add_topic("esc_status",                0, 0); // native 500
 	add_topic("actuator_motors",           0, 0); // native 500
 	add_topic("actuator_servos",           0, 0); // native 500
 
-	PX4_INFO("parameter identification logging topics forced to 500 Hz");
+	// Vibration and structural analysis.  vehicle_acceleration is filtered at
+	// 500 Hz; 200 Hz logging retains the 5-40 Hz band.  sensor_accel0/1 at
+	// 100 Hz provides a second IMU/noise reference.
+	add_topic("vehicle_acceleration",       5);
+	add_topic_multi("sensor_accel",        10, 2);
+
+	// Control/estimator context. These topics may not be published by every
+	// controller mode; optional subscriptions simply remain inactive.
+	add_optional_topic("vehicle_rates_setpoint", 20);
+	add_optional_topic("vehicle_attitude_setpoint", 20);
+	add_topic("vehicle_local_position",    50);
+	add_optional_topic_multi("battery_status", 200, 2);
+	add_topic("system_power",             200);
+	add_topic("vehicle_control_mode",     100);
+
+	PX4_INFO("parameter identification topics: 500 Hz core + diagnostic set");
 
 	return _subscriptions.count > 0;
 }

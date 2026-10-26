@@ -66,8 +66,9 @@ PARAM_DEFINE_INT32(NN_LQI_OUTPUT_EN, 0);
  * LQI model version
  *
  * 0 selects the previous nominal 13-state LQI weights (unchanged), 1 selects
- * the real-log identified 19-state composite LQI.  The model is fixed at
- * module start; changing this parameter requires restarting the ln module.
+ * the real-log identified 19-state composite LQI.  The direct-controller
+ * firmware defaults to the identified model; the model is fixed at module
+ * start, so changing this parameter requires restarting nn_control.
  *
  * @min 0
  * @max 1
@@ -75,4 +76,82 @@ PARAM_DEFINE_INT32(NN_LQI_OUTPUT_EN, 0);
  * @value 1 identified 19-state composite
  * @group Direct Actuator Controller
  */
-PARAM_DEFINE_INT32(NN_LQI_MODEL, 0);
+PARAM_DEFINE_INT32(NN_LQI_MODEL, 1);
+
+/**
+ * Ground-station manual-control submode enable
+ *
+ * Enables the RC-supervised ground-station input path. The path can only
+ * replace the four manual axes while the RC link is valid, the vehicle is
+ * armed, the configured RC flight-mode slot is selected, and a fresh
+ * GS-Link control stream is present. This does not bypass
+ * NN_LQI_OUTPUT_EN or any Commander/actuator safety gate.
+ *
+ * @min 0
+ * @max 1
+ * @value 0 disabled
+ * @value 1 enabled
+ * @group Direct Actuator Controller
+ */
+PARAM_DEFINE_INT32(NN_GS_EN, 1);
+
+/**
+ * Ground-station mode switch channel
+ *
+ * Deprecated by the PX4 RC_MAP_FLTMODE flight-mode mapping. Retained for
+ * parameter compatibility but is not used by the mode-slot gate.
+ *
+ * One-based physical RC channel used as the ground-station mode switch.
+ * The channel is read from rc_channels before the MANUAL_CONTROL input is
+ * accepted. Calibrate this channel and verify it with listener rc_channels.
+ *
+ * @min 1
+ * @max 18
+ * @group Direct Actuator Controller
+ */
+PARAM_DEFINE_INT32(NN_GS_SW_CHAN, 8);
+
+/**
+ * Ground-station mode switch endpoint
+ *
+ * Deprecated by NN_GS_MODE_SLOT. Retained for parameter compatibility but
+ * is not used by the mode-slot ground-station gate.
+ *
+ * Normalized RC switch threshold. A positive value selects the high endpoint
+ * (channel >= threshold); a negative value selects the low endpoint
+ * (channel <= threshold). The mode requires the opposite endpoint first and
+ * the selected endpoint held for 100 ms after arming.
+ *
+ * @min -1.0
+ * @max 1.0
+ * @decimal 2
+ * @increment 0.05
+ * @group Direct Actuator Controller
+ */
+PARAM_DEFINE_FLOAT(NN_GS_SW_TH, 0.70f);
+
+/**
+ * Ground-station flight-mode slot
+ *
+ * One-based RC flight-mode slot used to request ground-station control. The
+ * physical switch channel is configured with RC_MAP_FLTMODE and its slot
+ * parameters are COM_FLTMODE1..6. External mode 2 maps to parameter value 101.
+ *
+ * @min 1
+ * @max 6
+ * @group Direct Actuator Controller
+ */
+PARAM_DEFINE_INT32(NN_GS_MODE_SLOT, 6);
+
+/**
+ * Ground-station command timeout
+ *
+ * Maximum age of a GS-Link DATA_RC sample. When exceeded, control returns to
+ * RC immediately and mode 6 must be deselected and selected again.
+ *
+ * @min 50
+ * @max 1000
+ * @unit ms
+ * @group Direct Actuator Controller
+ */
+PARAM_DEFINE_INT32(NN_GS_TIMEOUT_MS, 250);

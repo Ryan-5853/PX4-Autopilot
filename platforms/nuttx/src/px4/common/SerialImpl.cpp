@@ -127,6 +127,11 @@ bool SerialImpl::configure()
 
 	case 1500000: speed = B1500000; break;
 
+#ifdef B4000000
+
+	case 4000000: speed = B4000000; break;
+#endif
+
 	default:
 		speed = _baudrate;
 		PX4_WARN("Using non-standard baudrate: %lu", _baudrate);
@@ -351,14 +356,21 @@ ssize_t SerialImpl::write(const void *buffer, size_t buffer_size)
 	}
 
 	int written = ::write(_serial_fd, buffer, buffer_size);
+	const int write_errno = written < 0 ? errno : 0;
 
 	if (written < 0) {
-		if (errno != EAGAIN) {
-			PX4_ERR("%s write error %d", _port, written);
+		if (write_errno != EAGAIN) {
+			PX4_ERR("%s write error %d errno %d", _port, written, write_errno);
 		}
 	}
 
 	::fsync(_serial_fd);
+
+	if (written < 0) {
+		// fsync() of a character device can fail and overwrite errno. Preserve
+		// the write error for the caller so it can distinguish EAGAIN/EINTR.
+		errno = write_errno;
+	}
 
 	return written;
 }
