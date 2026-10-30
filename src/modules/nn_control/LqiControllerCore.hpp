@@ -38,6 +38,9 @@ public:
 		float target_attitude_q_wb[4];
 		float angular_velocity_b[3];
 		float target_angular_velocity_b[3];
+		// Bias-corrected acceleration including gravity in body FRD.
+		// Existing LQI variants ignore this field.
+		float acceleration_b[3];
 		float collective_base; // normalized pilot command [0, 1]
 		float motor_rpm[2];
 		bool motor_rpm_valid;

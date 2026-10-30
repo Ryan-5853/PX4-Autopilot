@@ -77,6 +77,7 @@ private:
 		BackendUnavailable,
 		InvalidOutput,
 		BackendOutputDisabled,
+		AirframeMismatch,
 	};
 
 	void Run() override;

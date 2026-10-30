@@ -516,27 +516,32 @@ bool LoggedTopics::initialize_logged_topics(SDLogProfileMask profile)
 {
 	(void)profile;
 
-	// Parameter-identification logging: force the five calibration-critical
-	// topics at native rate.  Diagnostic topics are added at lower rates so
-	// 5-8 Hz oscillation analysis is possible without crowding the write path.
-	add_topic("vehicle_attitude",          0, 0); // ~534 Hz, offline -> 500
-	add_topic("vehicle_angular_velocity",  0, 0); // 1000 -> ~500
-	add_topic("esc_status",                0, 0); // native 500
-	add_topic("actuator_motors",           0, 0); // native 500
-	add_topic("actuator_servos",           0, 0); // native 500
+	// Compact dynamics/control profile.  200 Hz is sufficient to resolve the
+	// observed 3-8 Hz rigid-body motion while avoiding SD write starvation.
+	add_topic("vehicle_attitude",          5, 0);
+	add_topic("vehicle_angular_velocity",  5, 0);
+	add_topic("actuator_motors",           5, 0);
+	add_topic("actuator_servos",           5, 0);
+	add_topic("esc_status",               20, 0);
 
-	// Vibration and structural analysis.  vehicle_acceleration is filtered at
-	// 500 Hz; 200 Hz logging retains the 5-40 Hz band.  sensor_accel0/1 at
-	// 100 Hz provides a second IMU/noise reference.
-	add_topic("vehicle_acceleration",       5);
-	add_topic_multi("sensor_accel",        10, 2);
+	// Estimator diagnostics at 100 Hz or lower. Raw dual accelerometers remain
+	// available for consistency checks without duplicating all native samples.
+	add_topic("vehicle_acceleration",     10);
+	add_topic_multi("sensor_accel",       20, 2);
 
 	// Control/estimator context. These topics may not be published by every
 	// controller mode; optional subscriptions simply remain inactive.
 	add_optional_topic("vehicle_rates_setpoint", 20);
 	add_optional_topic("vehicle_attitude_setpoint", 20);
 	add_topic("vehicle_local_position",    50);
-	add_optional_topic_multi("battery_status", 200, 2);
+	// RC-raw/collective commands are required to separate pilot input from a
+	// closed-loop oscillation. Battery voltage is likewise required to explain
+	// thrust-command drift during a flight.
+	add_topic("manual_control_setpoint",     20);
+	add_topic_multi("battery_status",       200, 2);
+	add_optional_topic_multi("estimator_status", 200, 2);
+	add_optional_topic_multi("estimator_sensor_bias", 200, 2);
+	add_topic("sensors_status_imu",         200);
 	add_topic("system_power",             200);
 	add_topic("vehicle_control_mode",     100);
 

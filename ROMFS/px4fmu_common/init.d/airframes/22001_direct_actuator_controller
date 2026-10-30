@@ -34,6 +34,9 @@ param set SER_TEL1_BAUD 4000000
 # still takes precedence; actuator authority remains separately controlled by
 # NN_LQI_OUTPUT_EN.
 param set-default NN_GS_EN 1
+# The embedded identified LQI payload must match this physical airframe. A
+# mismatch inhibits actuator output even when NN_LQI_OUTPUT_EN is set.
+param set-default NN_AIRFRAME_ID 1
 
 # PX4 assigns external modes by FNV-1a name hash, not by request order. Reserve
 # COM_MODE0 for External Mode 1 and pin the nn_control name "Ground Station"
@@ -52,7 +55,6 @@ param set-default COM_FLTMODE6 101
 # 28 motor magnets; the logs were collected with the incorrect default of 14,
 # which doubled every ESC RPM entering the LQI observer.
 param set MOT_POLE_COUNT 28
-param set DSHOT_BIDIR_EN 1
 param set-default PWM_MAIN_TIM0 400
 param set-default PWM_MAIN_TIM1 333
 param set-default PWM_MAIN_TIM2 333

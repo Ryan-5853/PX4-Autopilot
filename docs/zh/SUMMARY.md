@@ -769,6 +769,7 @@
     - [ULog 文件格式](dev_log/ulog_file_format.md)
     - [Log Encryption](dev_log/log_encryption.md)
   - [高级主题](advanced/index.md)
+    - [稳定单体控制基线](advanced/nn_control_coaxial_collective_baseline.md)
     - [PX4 Metadata](advanced/px4_metadata.md)
     - [Package Delivery Architecture](advanced/package_delivery.md)
     - [Camera Integration/Architecture](camera/camera_architecture.md)

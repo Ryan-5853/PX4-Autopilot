@@ -64,6 +64,14 @@ bool NNControl::init()
 		return false;
 	}
 
+	PX4_INFO("nn_control airframe: %s, expected=%ld, configured=%ld, mismatch=%d",
+		 _backend.airframeId(), (long)_backend.expectedAirframeNumber(),
+		 (long)_backend.configuredAirframeNumber(), (int)_backend.airframeMismatch());
+	PX4_INFO("nn_control identification artifact SHA-256: %s",
+		 _backend.identificationArtifactSha256()[0] == '\0'
+		 ? "n/a (nominal model)"
+		 : _backend.identificationArtifactSha256());
+
 	// Follow fresh gyro data and cap execution at 500 Hz. For a true 500 Hz
 	// loop IMU_GYRO_RATEMAX must be configured to at least 500 Hz (1000 Hz is
 	// recommended for deterministic decimation).
@@ -917,7 +925,9 @@ void NNControl::Run()
 
 	} else {
 		if (inference_valid && !_backend.actuatorOutputAllowed()) {
-			_inhibit_reason = InhibitReason::BackendOutputDisabled;
+			_inhibit_reason = _backend.airframeMismatch()
+					  ? InhibitReason::AirframeMismatch
+					  : InhibitReason::BackendOutputDisabled;
 		}
 
 		++_rejected_count;
@@ -964,6 +974,7 @@ const char *NNControl::reasonString(InhibitReason reason)
 	case InhibitReason::BackendUnavailable: return "backend unavailable/rejected";
 	case InhibitReason::InvalidOutput: return "invalid controller output";
 	case InhibitReason::BackendOutputDisabled: return "backend output disabled";
+	case InhibitReason::AirframeMismatch: return "identified model airframe mismatch";
 	}
 
 	return "unknown";
@@ -1004,6 +1015,13 @@ int NNControl::print_status()
 	}
 
 	PX4_INFO("backend: %s, %s", _backend.name(), _backend.mode());
+	PX4_INFO("airframe: %s, expected id %ld, configured id %ld, mismatch %d",
+		 _backend.airframeId(), (long)_backend.expectedAirframeNumber(),
+		 (long)_backend.configuredAirframeNumber(), (int)_backend.airframeMismatch());
+	PX4_INFO("identification artifact SHA-256: %s",
+		 _backend.identificationArtifactSha256()[0] == '\0'
+		 ? "n/a (nominal model)"
+		 : _backend.identificationArtifactSha256());
 	PX4_INFO("manual source: %s, RC data source: %u, GS enabled: %d",
 		 source_name, (unsigned)_manual_control_setpoint.data_source,
 		 (int)_param_gs_enable.get());

@@ -49,6 +49,31 @@ const char *ControllerBackend::mode() const
 	return "21-128-128-4 int8 GRU (random-weight dry-run)";
 }
 
+const char *ControllerBackend::airframeId() const
+{
+	return "not-applicable";
+}
+
+const char *ControllerBackend::identificationArtifactSha256() const
+{
+	return "";
+}
+
+int32_t ControllerBackend::configuredAirframeNumber() const
+{
+	return 0;
+}
+
+int32_t ControllerBackend::expectedAirframeNumber() const
+{
+	return 0;
+}
+
+bool ControllerBackend::airframeMismatch() const
+{
+	return false;
+}
+
 bool ControllerBackend::actuatorOutputAllowed() const
 {
 	// This must only become true when generated production weights and their

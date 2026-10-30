@@ -28,6 +28,9 @@ px4_add_module(
 		ControllerTypes.hpp
 		FinalMotorOutputMap.hpp
 		GroundStationGate.hpp
+		LqiCoaxialCollectiveCore.hpp
+		LqiCoaxialCollectiveModel.hpp
+		LqiCoaxialCollectivePayload.hpp
 		NNVerificationProtocol.hpp
 		${controller_backend_sources}
 	MODULE_CONFIG

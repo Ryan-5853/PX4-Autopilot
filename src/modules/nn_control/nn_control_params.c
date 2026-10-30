@@ -49,8 +49,8 @@ PARAM_DEFINE_FLOAT(NN_SV_TRIM3, 0.0f);
 /**
  * LQI backend actuator output enable
  *
- * The Plan A external-collective LQI backend computes outputs at 500 Hz but
- * keeps actuator authority inhibited until bench/HIL validation is complete.
+ * The LQI backend computes outputs at 500 Hz but keeps actuator authority
+ * inhibited until bench/HIL validation is complete.
  * Set to 1 only after the validated controller has passed the bench and HIL
  * acceptance criteria; firmware output stays NaN while this is 0.
  *
@@ -66,17 +66,35 @@ PARAM_DEFINE_INT32(NN_LQI_OUTPUT_EN, 0);
  * LQI model version
  *
  * 0 selects the previous nominal 13-state LQI weights (unchanged), 1 selects
- * the real-log identified 19-state composite LQI.  The direct-controller
- * firmware defaults to the identified model; the model is fixed at module
- * start, so changing this parameter requires restarting nn_control.
+ * the external-upper identified 19-state composite LQI, and 2 selects the
+ * airframe-1 coaxial collective/servo LQI. The direct-controller firmware
+ * defaults to model 2; the model is fixed at module start, so changing this
+ * parameter requires restarting nn_control.
  *
  * @min 0
- * @max 1
+ * @max 2
  * @value 0 nominal 13-state
  * @value 1 identified 19-state composite
+ * @value 2 coaxial collective/servo LQI
  * @group Direct Actuator Controller
  */
-PARAM_DEFINE_INT32(NN_LQI_MODEL, 1);
+PARAM_DEFINE_INT32(NN_LQI_MODEL, 2);
+
+/**
+ * Physical airframe selected by the identified LQI model
+ *
+ * The generated identified LQI payload embeds its own airframe number. When
+ * NN_LQI_MODEL is 1 or 2, this value must match the embedded model or
+ * actuator output stays inhibited. This prevents an identified model generated for one
+ * airframe from being flown on another after flashing the wrong firmware.
+ * Change the parameter before restarting nn_control when moving a controller
+ * between registered airframes.
+ *
+ * @min 1
+ * @max 999
+ * @group Direct Actuator Controller
+ */
+PARAM_DEFINE_INT32(NN_AIRFRAME_ID, 1);
 
 /**
  * Ground-station manual-control submode enable

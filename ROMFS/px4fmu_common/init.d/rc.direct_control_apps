@@ -7,9 +7,10 @@
 # or any PX4 attitude, rate, position or flight-mode controller.
 land_detector start multicopter
 
-# This firmware image targets the real-log identified 19-state composite LQI.
+# This firmware image targets the coaxial collective/servo LQI generated from
+# the airframe-1 identification and the 3100 kV upper-rotor in-air table.
 # nn_control latches the model at startup, so select it before starting.
-param set NN_LQI_MODEL 1
+param set NN_LQI_MODEL 2
 gs_link start -d /dev/ttyS0 -b 4000000
 nn_control start
 

@@ -16,6 +16,8 @@
 # include "NeuralNetworkInterface.hpp"
 #endif
 #if defined(CONFIG_NN_CONTROL_BACKEND_LQR)
+# include "LqiCoaxialCollectiveCore.hpp"
+# include "LqiCoaxialCollectivePayload.hpp"
 # include "LqiCompositeCore.hpp"
 # include "LqiControllerCore.hpp"
 # include "LqiIdentifiedModel.hpp"
@@ -41,6 +43,14 @@ public:
 
 	const char *name() const;
 	const char *mode() const;
+
+	// Identified-LQI provenance. Generic backends return "not-applicable".
+	// NN_AIRFRAME_ID is checked against expectedAirframeNumber() before output.
+	const char *airframeId() const;
+	const char *identificationArtifactSha256() const;
+	int32_t configuredAirframeNumber() const;
+	int32_t expectedAirframeNumber() const;
+	bool airframeMismatch() const;
 	bool actuatorOutputAllowed() const;
 
 	bool verificationSupported() const;
@@ -59,8 +69,12 @@ private:
 #if defined(CONFIG_NN_CONTROL_BACKEND_LQR)
 	LqiControllerCore _lqi_nominal{lqi_nominal::kModel};
 	LqiCompositeCore _lqi_identified{lqi_identified::kModel};
+	LqiCoaxialCollectiveCore _lqi_coaxial_collective{
+		lqi_coaxial_collective::kModel};
 	LqiManualReference _lqi_nominal_reference{lqi_nominal::kModel};
 	LqiCompositeManualReference _lqi_identified_reference{lqi_identified::kModel};
+	LqiCoaxialManualReference _lqi_coaxial_collective_reference{
+		lqi_coaxial_collective::kModel};
 	int _model_index{0};
 #endif
 };

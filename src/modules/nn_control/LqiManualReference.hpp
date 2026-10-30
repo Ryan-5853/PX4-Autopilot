@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include "LqiCoaxialCollectiveModel.hpp"
 #include "LqiCompositeControllerModel.hpp"
 #include "LqiControllerCore.hpp"
 
@@ -129,3 +130,4 @@ private:
 
 using LqiManualReference = LqiManualReferenceT<LqiControllerModel>;
 using LqiCompositeManualReference = LqiManualReferenceT<LqiCompositeControllerModel>;
+using LqiCoaxialManualReference = LqiManualReferenceT<LqiCoaxialCollectiveModel>;
